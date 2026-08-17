@@ -4,6 +4,17 @@ Building FreeRDP from source with native Entra ID (Azure AD) webview authenticat
 
 The distro-packaged `freerdp` ships without the native in-app login popup — you get a URL printed to the terminal instead, requiring manual copy/paste of the redirect URL after signing in through an external browser. This guide builds FreeRDP with `WITH_WEBVIEW=ON` to get the real, native popup experience.
 
+## Requirements
+
+- **FreeRDP master/dev branch** — this was built and tested against **FreeRDP 3.30.1-dev0** (commit `220f9400e`). The `WITH_WEBVIEW` build option and the `/azure:` AAD flag are relatively recent additions, so an older release tag (anything pre-3.x, or early 3.x releases) may not have these features at all.
+- Confirm your cloned version supports what you need before building:
+
+      cd FreeRDP
+      git log -1 --oneline
+      grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
+
+  If that grep returns nothing, you've cloned a version that predates this feature — pull the latest `master` branch instead of a specific release tag.
+
 ## The problem with the stock package
 
     xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
