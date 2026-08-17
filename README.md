@@ -103,3 +103,28 @@ Then install it somewhere on your PATH and run it:
     rdp-aad <hostname> <user>     # connect to a specific host and user
 
 
+## Making it a clickable application (KDE desktop launcher)
+
+Rather than running `rdp-aad` from a terminal each time, you can create a `.desktop` entry so it shows up in your application menu/launcher like any other app.
+
+Create `~/.local/share/applications/rdp-aad.desktop`:
+
+    [Desktop Entry]
+    Type=Application
+    Name=RDP (Entra ID)
+    Comment=Connect to Entra-joined Windows machine via FreeRDP SDL3 with AAD webview auth
+    Exec=/home/YOUR_USERNAME/.local/bin/rdp-aad
+    Icon=preferences-system-network
+    Terminal=false
+    Categories=Network;RemoteAccess;
+    StartupNotify=true
+
+Replace `/home/YOUR_USERNAME/` with your actual home directory path (or just use `Exec=rdp-aad` if `~/.local/bin` is already on your `PATH`).
+
+Refresh KDE's application cache so it appears immediately:
+
+    kbuildsycoca6
+
+It should now show up in your application launcher (search "RDP" in KRunner or your app menu) as **"RDP (Entra ID)"**, launching without a visible terminal window.
+
+**Note:** `Terminal=false` means any of the script's own console output (like the hostname-resolution warning) won't be visible if something goes wrong — for troubleshooting, run `rdp-aad` directly from a terminal instead.
