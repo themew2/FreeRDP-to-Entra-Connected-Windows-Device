@@ -69,6 +69,7 @@ Lands at `./client/SDL/SDL3/sdl-freerdp`.
 - `<remote-hostname>` must match the Entra ID-registered device name exactly and must resolve via DNS/`/etc/hosts`.
 - Avoid combining `/smart-sizing` with `/f` (true fullscreen) — this combination has known rendering issues (horizontal line artifacts) on Wayland with the SDL3 client. Use `/f` with fixed `/w`/`/h` instead.
 - Minimize with **Right Shift + M**; toggle fullscreen with **Right Shift + Enter** (SDL client default keybinds, different from the older xfreerdp client).
+- Setting resolution will depend on your local resolution capabilities. 
 
 ## Known issues
 
