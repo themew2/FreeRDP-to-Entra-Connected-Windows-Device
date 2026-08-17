@@ -80,6 +80,26 @@ Lands at `./client/SDL/SDL3/sdl-freerdp`.
 
 See `rdp-aad.sh` in this repo for a ready-to-use wrapper with hostname resolution checking and sane defaults.
 
+## Using the wrapper script
 
+Edit the defaults at the top of `rdp-aad.sh` to match your environment:
+
+    DEFAULT_HOST="your-vm-hostname"
+    DEFAULT_USER="youruser@yourdomain.com"
+    TENANT_ID="your-entra-tenant-id"
+    FREERDP_BIN="$HOME/FreeRDP/build/client/SDL/SDL3/sdl-freerdp"
+
+Then install it somewhere on your PATH and run it:
+
+    mkdir -p ~/.local/bin
+    cp rdp-aad.sh ~/.local/bin/rdp-aad
+    chmod +x ~/.local/bin/rdp-aad
+    rdp-aad
+
+**Usage:**
+
+    rdp-aad                       # connect to default host/user
+    rdp-aad <hostname>            # connect to a specific host, default user
+    rdp-aad <hostname> <user>     # connect to a specific host and user
 
 
