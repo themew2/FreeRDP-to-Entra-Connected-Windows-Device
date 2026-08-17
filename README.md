@@ -6,14 +6,18 @@ The distro-packaged `freerdp` ships without the native in-app login popup — yo
 
 ## Requirements
 
-- **FreeRDP master/dev branch** — this was built and tested against **FreeRDP 3.30.1-dev0** (commit `220f9400e`). The `WITH_WEBVIEW` build option and the `/azure:` AAD flag are relatively recent additions, so an older release tag (anything pre-3.x, or early 3.x releases) may not have these features at all.
-- Confirm your cloned version supports what you need before building:
+Before doing anything else, clone FreeRDP and check what you actually have — this guide requires a recent build with `WITH_WEBVIEW` and AAD support, which are not present in older release tags.
 
-      cd FreeRDP
-      git log -1 --oneline
-      grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
+    git clone https://github.com/FreeRDP/FreeRDP.git
+    cd FreeRDP
+    git log -1 --format="%H %ci"
+    grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
 
-  If that grep returns nothing, you've cloned a version that predates this feature — pull the latest `master` branch instead of a specific release tag.
+**What to look for:**
+- The `grep` command should return a match (`option(WITH_WEBVIEW ...)`). If it returns nothing, you've checked out a version that predates this feature entirely — stay on the `master` branch (don't check out a release tag) and pull the latest commits instead.
+- This guide was built and tested against commit `220f9400e` (reported as `FreeRDP version 3.30.1-dev0` via `--version` once built). Anything reasonably close to this on `master` should work; older tagged releases (3.0.x-3.x early releases) will not.
+
+Once confirmed, continue to the dependency install below.
 
 ## The problem with the stock package
 
@@ -38,6 +42,15 @@ shows `WITH_WEBVIEW=OFF` on most distro packages.
       cups-devel webkitgtk6.0-devel
 
 **Key package:** `webkitgtk6.0-devel` — FreeRDP's webview feature pulls in a small external helper library (`akallabeth/webview` via CMake FetchContent) which searches for WebKitGTK in this priority order: `webkitgtk-6.0` → `webkit2gtk-4.1` → `webkit2gtk-4.0`. Current Fedora has deprecated `webkit2gtk-4.0`, but `webkitgtk-6.0` (GTK4-based) works fine.
+
+- **FreeRDP master/dev branch** — this was built and tested against **FreeRDP 3.30.1-dev0** (commit `220f9400e`). The `WITH_WEBVIEW` build option and the `/azure:` AAD flag are relatively recent additions, so an older release tag (anything pre-3.x, or early 3.x releases) may not have these features at all.
+- Confirm your cloned version supports what you need before building:
+
+      cd FreeRDP
+      git log -1 --oneline
+      grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
+
+  If that grep returns nothing, you've cloned a version that predates this feature — pull the latest `master` branch instead of a specific release tag.
 
 ## Step 2 — Clone and configure (SDL3 client, webview, AAD, and PulseAudio all enabled)
 
