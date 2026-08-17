@@ -78,3 +78,7 @@ Lands at `./client/SDL/SDL3/sdl-freerdp`.
 ## Wrapper script
 
 See `rdp-aad.sh` in this repo for a ready-to-use wrapper with hostname resolution checking and sane defaults.
+=======
+# FreeRDP-to-Entra-Connected-Windows-Device
+Sets up FreeRDP to allow RDP connections to Azure/Entra Joined Windows Machine
+
