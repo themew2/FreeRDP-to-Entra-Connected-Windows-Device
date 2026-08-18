@@ -94,9 +94,18 @@ This installs the client, plugins, and libraries to their proper system location
 **Flags that matter:**
 - `/sec:aad` is required alongside `/azure:` — without it, the client falls back to NLA/Kerberos and fails with `Cannot find KDC for realm`.
 - `<remote-hostname>` must match the Entra ID-registered device name exactly and must resolve via DNS/`/etc/hosts`.
+- `/cert:ignore` skips TLS certificate verification for the connection. This is convenient for a lab/self-signed setup, but it means you won't be warned if a certificate doesn't match — don't use this against a machine over an untrusted network without understanding that tradeoff. Drop the flag (and properly trust the machine's certificate instead) for anything more sensitive than a home lab.
 - Avoid combining `/smart-sizing` with `/f` (true fullscreen) — see Known Issues below.
 - Minimize with **Right Shift + M**; toggle fullscreen with **Right Shift + Enter** (SDL client default keybinds, different from the older xfreerdp client).
 - Adjust `/w` and `/h` to match your own display's resolution.
+
+## Security note
+
+FreeRDP had a critical (CVSS 9.8) heap use-after-free vulnerability in the cliprdr (clipboard) channel — **CVE-2026-25959** — affecting versions prior to **3.23.0**, fixed in that release. Since this guide tracks `master`, you're almost certainly well past the fix, but confirm your build's version before relying on it, especially if you've pinned an older commit for any reason:
+
+    sdl-freerdp --version
+
+If your version predates 3.23.0, update before using `/clipboard` in any untrusted environment.
 
 ## Known issues
 
@@ -154,6 +163,10 @@ Refresh KDE's application cache so it appears immediately:
 It should now show up in your application launcher (search "RDP" in KRunner or your app menu) as **"RDP (Entra ID)"**, launching without a visible terminal window.
 
 **Note:** `Terminal=false` means any of the script's own console output (like the hostname-resolution warning) won't be visible if something goes wrong — for troubleshooting, run `rdp-aad` directly from a terminal instead.
+
+## License
+
+Released under [The Unlicense](LICENSE) — public domain, no conditions, use it however you'd like.
 
 ## Acknowledgments
 
