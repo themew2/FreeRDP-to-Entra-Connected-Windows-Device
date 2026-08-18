@@ -13,19 +13,17 @@ Before doing anything else, clone FreeRDP and check what you actually have — t
     git log -1 --format="%H %ci"
     grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
 
-## The problem with the stock package
-
-    xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
-
-shows `WITH_WEBVIEW=OFF` on most distro packages.
-
 **What to look for:**
 - The `grep` command should return a match (`option(WITH_WEBVIEW ...)`). If it returns nothing, you've checked out a version that predates this feature entirely — stay on the `master` branch (don't check out a release tag) and pull the latest commits instead.
 - This guide was built and tested against commit `220f9400e` (reported as `FreeRDP version 3.30.1-dev0` via `--version` once built). Anything reasonably close to this on `master` should work; older tagged releases (3.0.x-3.x early releases) will not.
 
+You can also spot-check an already-installed distro package the same way, to confirm it lacks this feature before deciding to build from source:
+
+    xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
+
+This will show `WITH_WEBVIEW=OFF` on most distro packages — confirming why the build-from-source steps below are necessary.
+
 Once confirmed, continue to the dependency install below.
-
-
 
 ## Step 1 — Install build dependencies
 
@@ -45,21 +43,15 @@ Once confirmed, continue to the dependency install below.
 
 **Key package:** `webkitgtk6.0-devel` — FreeRDP's webview feature pulls in a small external helper library (`akallabeth/webview` via CMake FetchContent) which searches for WebKitGTK in this priority order: `webkitgtk-6.0` → `webkit2gtk-4.1` → `webkit2gtk-4.0`. Current Fedora has deprecated `webkit2gtk-4.0`, but `webkitgtk-6.0` (GTK4-based) works fine.
 
-- **FreeRDP master/dev branch** — this was built and tested against **FreeRDP 3.30.1-dev0** (commit `220f9400e`). The `WITH_WEBVIEW` build option and the `/azure:` AAD flag are relatively recent additions, so an older release tag (anything pre-3.x, or early 3.x releases) may not have these features at all.
-- Confirm your cloned version supports what you need before building:
-
-      cd FreeRDP
-      git log -1 --oneline
-      grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
-
-  If that grep returns nothing, you've cloned a version that predates this feature — pull the latest `master` branch instead of a specific release tag.
-
 ## Step 2 — Configure (SDL3 client, webview, AAD, and PulseAudio all enabled)
 
     cd FreeRDP
     mkdir build && cd build
     cmake -GNinja -DWITH_WEBVIEW=ON -DWITH_CLIENT_SDL=ON -DWITH_CLIENT_SDL3=ON -DWITH_CLIENT_SDL2=OFF -DWITH_AAD=ON -DWITH_PULSE=ON ..
 
+Confirm before building:
+
+    grep -i "webview\|gtk4\|SDL3\|PULSE" CMakeCache.txt
 
 ## Step 3 — Build
 
@@ -91,18 +83,16 @@ Lands at `./client/SDL/SDL3/sdl-freerdp`.
 - `<remote-hostname>` must match the Entra ID-registered device name exactly and must resolve via DNS/`/etc/hosts`.
 - Avoid combining `/smart-sizing` with `/f` (true fullscreen) — this combination has known rendering issues (horizontal line artifacts) on Wayland with the SDL3 client. Use `/f` with fixed `/w`/`/h` instead.
 - Minimize with **Right Shift + M**; toggle fullscreen with **Right Shift + Enter** (SDL client default keybinds, different from the older xfreerdp client).
-- Setting resolution will depend on your local resolution capabilities. 
+- Setting resolution will depend on your local display's capabilities — adjust `/w` and `/h` to match.
 
 ## Known issues
 
 - SDL3 client + Wayland: horizontal line rendering artifacts when combining `/smart-sizing` with fullscreen mode. Workaround: don't use `/smart-sizing`; use fixed `/w`/`/h` with `/f` instead.
 - Distro-packaged FreeRDP builds typically ship with `WITH_WEBVIEW=OFF` and `WITH_PULSE=OFF` by default — both must be explicitly enabled and built from source.
 
-## Wrapper script
+## Using the wrapper script
 
 See `rdp-aad.sh` in this repo for a ready-to-use wrapper with hostname resolution checking and sane defaults.
-
-## Using the wrapper script
 
 Edit the defaults at the top of `rdp-aad.sh` to match your environment:
 
@@ -123,7 +113,6 @@ Then install it somewhere on your PATH and run it:
     rdp-aad                       # connect to default host/user
     rdp-aad <hostname>            # connect to a specific host, default user
     rdp-aad <hostname> <user>     # connect to a specific host and user
-
 
 ## Making it a clickable application (KDE desktop launcher)
 
