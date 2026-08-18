@@ -63,8 +63,6 @@ Confirm before building:
 
     grep -i "webview\|gtk4\|SDL3\|PULSE" CMakeCache.txt
 
-> **Note on `WITH_PULSE`:** in testing on Fedora 44, this defaulted to `OFF` even with PulseAudio correctly detected on the system (all `PULSEAUDIO_*` paths resolved correctly in `CMakeCache.txt` — only the feature switch itself was off). This may not be universal across distros, so check your own `CMakeCache.txt` rather than assuming either way, and explicitly pass `-DWITH_PULSE=ON` regardless to be safe.
-
 ## Step 3 — Build and install properly
 
 Don't just run binaries straight out of the build directory — build and install them properly so paths, plugin discovery, and future upgrades behave correctly:
