@@ -13,17 +13,19 @@ Before doing anything else, clone FreeRDP and check what you actually have — t
     git log -1 --format="%H %ci"
     grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
 
+## The problem with the stock package
+
+    xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
+
+shows `WITH_WEBVIEW=OFF` on most distro packages.
+
 **What to look for:**
 - The `grep` command should return a match (`option(WITH_WEBVIEW ...)`). If it returns nothing, you've checked out a version that predates this feature entirely — stay on the `master` branch (don't check out a release tag) and pull the latest commits instead.
 - This guide was built and tested against commit `220f9400e` (reported as `FreeRDP version 3.30.1-dev0` via `--version` once built). Anything reasonably close to this on `master` should work; older tagged releases (3.0.x-3.x early releases) will not.
 
 Once confirmed, continue to the dependency install below.
 
-## The problem with the stock package
 
-    xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
-
-shows `WITH_WEBVIEW=OFF` on most distro packages.
 
 ## Step 1 — Install build dependencies
 
