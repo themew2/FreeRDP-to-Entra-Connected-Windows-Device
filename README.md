@@ -54,16 +54,12 @@ Once confirmed, continue to the dependency install below.
 
   If that grep returns nothing, you've cloned a version that predates this feature — pull the latest `master` branch instead of a specific release tag.
 
-## Step 2 — Clone and configure (SDL3 client, webview, AAD, and PulseAudio all enabled)
+## Step 2 — Configure (SDL3 client, webview, AAD, and PulseAudio all enabled)
 
-    git clone https://github.com/FreeRDP/FreeRDP.git
     cd FreeRDP
     mkdir build && cd build
     cmake -GNinja -DWITH_WEBVIEW=ON -DWITH_CLIENT_SDL=ON -DWITH_CLIENT_SDL3=ON -DWITH_CLIENT_SDL2=OFF -DWITH_AAD=ON -DWITH_PULSE=ON ..
 
-Confirm before building:
-
-    grep -i "webview\|gtk4\|SDL3\|PULSE" CMakeCache.txt
 
 ## Step 3 — Build
 
