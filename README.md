@@ -1,171 +1,296 @@
-# FreeRDP + Entra ID (AAD) Native Webview Auth on Fedora/Nobara
+# Entra RDP
 
-Building FreeRDP with native Entra ID (Azure AD) webview authentication support — the Linux equivalent of Windows' "Use a web account to sign in to the remote computer" checkbox in `mstsc.exe`.
+A desktop app for connecting to **Microsoft Entra ID (Azure AD) joined Windows machines** from Linux, with native web account sign-in — the equivalent of the *"Use a web account to sign in to the remote computer"* checkbox in Windows' `mstsc.exe`.
 
-The distro-packaged `freerdp` on most distros ships with the webview feature disabled, so you get a URL printed to the terminal instead of a native popup — requiring manual copy/paste of the redirect URL after signing in through an external browser. This guide covers building FreeRDP with `WITH_WEBVIEW=ON` to get the real, native popup experience, plus a couple of alternative install paths worth knowing about.
+![Entra RDP](data/screenshots/main-window.png)
 
-> **Note:** `WITH_WEBVIEW` has existed in FreeRDP since **3.16.0** — it's not a brand-new feature, just one most distro packagers leave disabled by default (likely to avoid the WebKitGTK dependency chain).
+---
 
-## Requirements
+## The problem this solves
 
-Clone FreeRDP and confirm the feature exists in your checkout before doing anything else:
+Distribution packages generally enable everything Entra sign-in needs **except one flag**. On Fedora 44:
 
-    git clone https://github.com/FreeRDP/FreeRDP.git
-    cd FreeRDP
-    git log -1 --format="%H %ci"
-    grep -r "WITH_WEBVIEW" client/SDL/common/aad/CMakeLists.txt
+```console
+$ /usr/bin/sdl-freerdp /buildconfig | tr ' ' '\n' | grep -iE 'WITH_AAD|WITH_PULSE|WITH_SSO_MIB|WITH_WEBVIEW'
+WITH_AAD=ON
+WITH_PULSE=ON
+WITH_SSO_MIB=ON
+WITH_WEBVIEW=OFF
+```
 
-**What to look for:**
-- The `grep` should return a match (`option(WITH_WEBVIEW ...)`). If it returns nothing, your checkout predates 3.16.0 — stay on `master` (don't check out an old release tag).
-- This guide was built and tested against commit `220f9400e` (`FreeRDP version 3.30.1-dev0`).
+`WITH_WEBVIEW=OFF` is the whole problem. Without it, signing in degrades to a copy-and-paste ritual: the client prints a login URL, you open it in a browser, sign in, then paste the redirect URL back into the terminal. With it, a browser window opens inside the app and sign-in just works.
 
-You can spot-check an already-installed distro package the same way, to confirm whether it has webview enabled before deciding whether you need to build at all:
+This is not distribution carelessness. FreeRDP pulls its webview helper (`akallabeth/webview`) via CMake FetchContent at configure time, and packaging policies commonly forbid fetching sources during a build. Enabling it in a package would require that helper to be packaged independently first.
 
-    xfreerdp /buildconfig | tr ' ' '\n' | grep -i webview
+Support landed upstream in **FreeRDP 3.16.0**, so anything older cannot have it regardless of configuration. Newer packages vary — run the check above on your own system before compiling anything.
 
-If this shows `WITH_WEBVIEW=OFF`, the steps below apply to you.
+Both builds are named `sdl-freerdp`. **Name equality is not build equality** — which is why this app probes the binary it is about to run and tells you which one you have before you connect.
 
-## Alternative install paths (worth checking before building manually)
+---
 
-Building from source with `ninja`/manual steps is one option, but it's not the only one:
+## Install
 
-- **RPM-based distros**: FreeRDP's own repo includes scripts to build a proper nightly RPM yourself, rather than compiling and running loose binaries out of a build directory. See `packaging/scripts/prepare_rpm_freerdp-nightly.sh` in the repo.
-- **Flatpak**: a buildable Flatpak manifest also exists in the repo, if you'd prefer a sandboxed install over a system-wide one.
-- **`WITH_SSO_MIB`**: if you already have a broker-style daemon installed locally (e.g., Microsoft's Linux Intune client, which provides `microsoft-identity-broker`-compatible D-Bus service), this build option lets FreeRDP retrieve SSO tokens automatically with no webview popup at all. Not covered in depth in this guide, but worth knowing if you already have that infrastructure in place — see [FreeRDP/FreeRDP#13201](https://github.com/FreeRDP/FreeRDP/issues/13201) for maintainer commentary.
+### Flatpak
 
-This guide covers the straightforward manual build + `install` path below, which works regardless of distro.
+The Flatpak bundles its own webview-enabled FreeRDP, so there is nothing to compile.
 
-## Step 1 — Install build dependencies
+```bash
+flatpak install flathub io.github.themew2.EntraRDP
+```
 
-    sudo dnf install cmake ninja-build gcc-c++ git \
-      systemd-devel libuuid-devel pulseaudio-libs-devel \
-      libXrandr-devel gsm-devel pam-devel fuse3-devel \
-      opus-devel lame-devel openssl-devel libX11-devel \
-      libXext-devel libXinerama-devel libXcursor-devel \
-      libXi-devel libXdamage-devel libXv-devel libxkbfile-devel \
-      alsa-lib-devel openh264-devel libavcodec-free-devel \
-      libavformat-free-devel libavutil-free-devel \
-      libswresample-free-devel libswscale-free-devel \
-      libusb1-devel uriparser-devel SDL2-devel SDL2_ttf-devel \
-      pkcs11-helper-devel krb5-devel cjson-devel cairo-devel \
-      soxr-devel wayland-devel wayland-protocols-devel \
-      cups-devel webkitgtk6.0-devel
+> Not yet on Flathub. To build it yourself, see [packaging/flatpak](packaging/flatpak/).
 
-**Key package:** `webkitgtk6.0-devel` — the webview feature pulls in a small external helper library (`akallabeth/webview` via CMake FetchContent) which searches for WebKitGTK in this priority order: `webkitgtk-6.0` → `webkit2gtk-4.1` → `webkit2gtk-4.0`. Current Fedora has deprecated `webkit2gtk-4.0`, but `webkitgtk-6.0` (GTK4-based) works fine — no need to chase the deprecated package.
+### From source
 
-## Step 2 — Configure
+```bash
+git clone https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device.git
+cd FreeRDP-to-Entra-Connected-Windows-Device
+./scripts/install.sh
+```
 
-    cd FreeRDP
-    mkdir build && cd build
-    cmake -GNinja -DWITH_WEBVIEW=ON -DWITH_CLIENT_SDL=ON -DWITH_CLIENT_SDL3=ON -DWITH_CLIENT_SDL2=OFF -DWITH_AAD=ON -DWITH_PULSE=ON ..
+That single command does everything. Budget **10–30 minutes**, almost all of it compiling FreeRDP, and around 3 GB of disk for the source and build tree.
 
-Confirm before building:
+Only the dependency step needs `sudo`. Everything else installs under your home directory.
 
-    grep -i "webview\|gtk4\|SDL3\|PULSE" CMakeCache.txt
+---
 
-## Step 3 — Build and install properly
+## What the scripts do
 
-Don't just run binaries straight out of the build directory — build and install them properly so paths, plugin discovery, and future upgrades behave correctly:
+Two scripts, with distinct jobs. `install.sh` is the front door and calls the other one for you.
 
-    ninja
-    sudo cmake --build . --target install
+```
+install.sh
+  ├─ 1. build-freerdp.sh          compile FreeRDP with WITH_WEBVIEW=ON
+  ├─ 2. python3-pip, python3-pyqt6   installed if missing
+  ├─ 3. pip install                  the app, to ~/.local/bin/entrardp
+  └─ 4. desktop entry, icon, AppStream metainfo
+```
 
-This installs the client, plugins, and libraries to their proper system locations rather than leaving you dependent on the raw build tree.
+### `scripts/build-freerdp.sh`
 
-## Step 4 — Connect
+Produces a FreeRDP binary that Fedora, Debian, and Arch do not ship: one compiled with `-DWITH_WEBVIEW=ON`.
 
-    sdl-freerdp \
-      /v:<remote-hostname> \
-      /sec:aad \
-      /azure:tenantid:<your-entra-tenant-id> \
-      /u:<user>@<yourdomain>.com \
-      /cert:ignore \
-      /f \
-      /w:2560 \
-      /h:1440 \
-      /clipboard \
-      /microphone:sys:pulse \
-      /sound:sys:pulse
+| Phase | What happens |
+|---|---|
+| Dependencies | Detects `dnf` / `apt` / `pacman` and installs the toolchain and headers |
+| **Preflight** | Verifies every prerequisite with `pkg-config` and reports *all* missing ones at once |
+| Source | Shallow-clones FreeRDP to `~/.cache/entrardp/FreeRDP` |
+| Configure | `-DWITH_WEBVIEW=ON -DWITH_AAD=ON -DWITH_SSO_MIB=ON -DWITH_PULSE=ON` |
+| **Gate** | Aborts unless CMakeCache confirms `WITH_WEBVIEW:BOOL=ON` and `WITH_PULSE:BOOL=ON` |
+| Build & install | `cmake --build`, then `--target install` |
+| **Verify** | Runs `/buildconfig` on the installed binary to confirm webview is really on |
 
-(If you skipped the `install` step and are running from the build tree directly, the binary is at `./client/SDL/SDL3/sdl-freerdp` instead.)
+The three checks exist because the failure this script prevents is a *silent* one. CMake accepts a flag it has not yet defined without complaint, so a build can succeed, install cleanly, run fine — and simply lack the feature you asked for. Each check fails loudly at the earliest point it can.
 
-**Flags that matter:**
-- `/sec:aad` is required alongside `/azure:` — without it, the client falls back to NLA/Kerberos and fails with `Cannot find KDC for realm`.
-- `<remote-hostname>` must match the Entra ID-registered device name exactly and must resolve via DNS/`/etc/hosts`.
-- `/cert:ignore` skips TLS certificate verification for the connection. This is convenient for a lab/self-signed setup, but it means you won't be warned if a certificate doesn't match — don't use this against a machine over an untrusted network without understanding that tradeoff. Drop the flag (and properly trust the machine's certificate instead) for anything more sensitive than a home lab.
-- Avoid combining `/smart-sizing` with `/f` (true fullscreen) — see Known Issues below.
-- Minimize with **Right Shift + M**; toggle fullscreen with **Right Shift + Enter** (SDL client default keybinds, different from the older xfreerdp client).
-- Adjust `/w` and `/h` to match your own display's resolution.
+**Installs to `~/.local/share/entrardp/freerdp`.** Your distribution's FreeRDP is never touched, and the two coexist:
 
-## Security note
+| Path | Source | WebView |
+|---|---|---|
+| `/usr/bin/sdl-freerdp` | Distribution package | OFF |
+| `~/.local/share/entrardp/freerdp/bin/sdl-freerdp` | This script | **ON** |
 
-FreeRDP had a critical (CVSS 9.8) heap use-after-free vulnerability in the cliprdr (clipboard) channel — **CVE-2026-25959** — affecting versions prior to **3.23.0**, fixed in that release. Since this guide tracks `master`, you're almost certainly well past the fix, but confirm your build's version before relying on it, especially if you've pinned an older commit for any reason:
+The app searches its own prefix first, so it picks the right one automatically.
 
-    sdl-freerdp --version
+Run it on its own when you only need the binary — for example if the GUI is already installed:
 
-If your version predates 3.23.0, update before using `/clipboard` in any untrusted environment.
+```bash
+./scripts/build-freerdp.sh
+```
 
-## Known issues
+Useful environment variables:
 
-- **`/smart-sizing` + fullscreen rendering artifacts (horizontal lines) on Wayland with the SDL3 client** — reported upstream as [FreeRDP/FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204), fixed via [PR #13205](https://github.com/FreeRDP/FreeRDP/pull/13205), targeted for the **3.31.0** release. If you're on a build after this merged, `/smart-sizing` should work correctly and this workaround is unnecessary. Until then: don't use `/smart-sizing`; use fixed `/w`/`/h` with `/f` instead.
-- Distro-packaged FreeRDP builds typically ship with `WITH_WEBVIEW=OFF` by default (present since 3.16.0, just often disabled by packagers) — must be explicitly enabled and built to get the native popup.
+| Variable | Default | Purpose |
+|---|---|---|
+| `SKIP_DEPS=1` | off | Skip package installation; preflight still runs |
+| `SKIP_PREFLIGHT=1` | off | Continue despite preflight warnings, when a library is present under an unexpected pkg-config name |
+| `FREERDP_BRANCH` | `master` | Build a specific tag or branch (must be ≥ 3.16.0) |
+| `ENTRARDP_PREFIX` | `~/.local/share/entrardp/freerdp` | Install somewhere else |
+| `JOBS` | all cores | Limit parallel compilation |
+| `WITH_SSO_MIB` | `auto` | Automatic token retrieval via a local identity broker. Enabled only if the `sso-mib` library is present; set `ON` or `OFF` to force |
 
-## Using the wrapper script
+### `scripts/install.sh`
 
-See `rdp-aad.sh` in this repo for a ready-to-use wrapper with hostname resolution checking and sane defaults.
+The full installation. Runs `build-freerdp.sh`, then installs the GUI and registers it with your desktop.
 
-Edit the defaults at the top of `rdp-aad.sh` to match your environment:
+Skip the compile if you already have a webview-enabled FreeRDP:
 
-    DEFAULT_HOST="your-vm-hostname"
-    DEFAULT_USER="youruser@yourdomain.com"
-    TENANT_ID="your-entra-tenant-id"
-    FREERDP_BIN="sdl-freerdp"
+```bash
+SKIP_FREERDP=1 ./scripts/install.sh
+```
 
-(If you used `cmake --build . --target install` in Step 3, `sdl-freerdp` should already be on your `PATH`; if running from the raw build tree instead, set the full path: `$HOME/FreeRDP/build/client/SDL/SDL3/sdl-freerdp`.)
+Then point the app at your binary using the **Browse** button. It will tell you whether that build supports webview.
 
-Then install it somewhere on your PATH and run it:
+### Uninstalling
 
-    mkdir -p ~/.local/bin
-    cp rdp-aad.sh ~/.local/bin/rdp-aad
-    chmod +x ~/.local/bin/rdp-aad
-    rdp-aad
+```bash
+pip uninstall entrardp
+rm -rf ~/.local/share/entrardp ~/.cache/entrardp
+rm -f ~/.local/share/applications/io.github.themew2.EntraRDP.desktop
+```
 
-**Usage:**
+---
 
-    rdp-aad                       # connect to default host/user
-    rdp-aad <hostname>            # connect to a specific host, default user
-    rdp-aad <hostname> <user>     # connect to a specific host and user
+### Before compiling: check what you already have
 
-## Making it a clickable application (KDE desktop launcher)
+An existing build may already do the job:
 
-Rather than running `rdp-aad` from a terminal each time, create a `.desktop` entry so it shows up in your application menu/launcher like any other app.
+- **Nightly packages** install to `/opt/freerdp-nightly` and coexist with your distribution package. See [PreBuilds](https://github.com/FreeRDP/FreeRDP/wiki/PreBuilds).
+- **RPM users** can build packages from the FreeRDP checkout using the scripts in its `packaging/scripts` directory.
+- **Flathub** ships `com.freerdp.FreeRDP`, with a beta channel available.
 
-Create `~/.local/share/applications/rdp-aad.desktop`:
+Check any of them with:
 
-    [Desktop Entry]
-    Type=Application
-    Name=RDP (Entra ID)
-    Comment=Connect to Entra-joined Windows machine via FreeRDP SDL3 with AAD webview auth
-    Exec=/home/YOUR_USERNAME/.local/bin/rdp-aad
-    Icon=preferences-system-network
-    Terminal=false
-    Categories=Network;RemoteAccess;
-    StartupNotify=true
+```bash
+<path-to-binary> /buildconfig | tr ' ' '\n' | grep -i WITH_WEBVIEW
+```
 
-Replace `/home/YOUR_USERNAME/` with your actual home directory path (or just use `Exec=rdp-aad` if `~/.local/bin` is already on your `PATH`).
+`WITH_WEBVIEW=ON` means you can skip the compile entirely — use `SKIP_FREERDP=1` and select that binary in the app.
 
-Refresh KDE's application cache so it appears immediately:
+---
 
-    kbuildsycoca6
+## Usage
 
-It should now show up in your application launcher (search "RDP" in KRunner or your app menu) as **"RDP (Entra ID)"**, launching without a visible terminal window.
+Fill in three fields and press Connect:
 
-**Note:** `Terminal=false` means any of the script's own console output (like the hostname-resolution warning) won't be visible if something goes wrong — for troubleshooting, run `rdp-aad` directly from a terminal instead.
+| Field | Notes |
+|---|---|
+| **Host name** | Must match the Entra-registered device name **exactly**, and must resolve via DNS or `/etc/hosts`. |
+| **User name** | `you@yourdomain.com` |
+| **Tenant ID** | Your Entra tenant GUID, from Azure Portal → Microsoft Entra ID → Overview. |
+
+Save the combination as a named profile to reuse it. Profiles live in `~/.config/entrardp/profiles.json`, mode `600`.
+
+**No credentials are ever stored.** Authentication happens entirely inside the Entra webview. The app keeps only hostnames, usernames, and tenant IDs.
+
+### Session options
+
+Every checkbox maps to exactly one FreeRDP flag, shown in its tooltip and reflected live in the command preview. Nothing is hidden — if the app misbehaves, copy the previewed command and run it in a terminal to see the raw output.
+
+Defaults match a verified-working configuration: fullscreen, fixed resolution, certificate bypass, audio in and out, and clipboard sharing.
+
+### Keyboard shortcuts inside a session
+
+These are SDL client defaults, and differ from the older `xfreerdp` client:
+
+| Keys | Action |
+|---|---|
+| `Right Shift` + `Enter` | Toggle fullscreen |
+| `Right Shift` + `M` | Minimize |
+
+---
+
+## Troubleshooting
+
+**dnf reports an ffmpeg conflict (`libavcodec-free` vs `ffmpeg-libs`).**
+Your system has RPMFusion's full ffmpeg, which conflicts with Fedora's patent-stripped `libav*-free` packages. The script requests these headers by pkg-config capability so dnf resolves to whichever you already have. If you still hit it on an older copy of the script, install `ffmpeg-devel` and re-run with `SKIP_DEPS=1`.
+
+**Do not use `--allowerasing` to resolve this.** It would replace RPMFusion's ffmpeg with the stripped build, degrading codec support system-wide as a side effect of building an RDP client.
+
+**`Could NOT find Wayland (missing: XKBCOMMON_INCLUDE_DIR)`.**
+Install `libxkbcommon-devel` (Fedora), `libxkbcommon-dev` (Debian/Ubuntu), or `libxkbcommon` (Arch). Wayland is a required feature in FreeRDP's uwac component, so configure stops rather than disabling it. Note this is a different package from `libxkbfile`.
+
+**cmake warns that `jansson` and `json-c` were not found.**
+FreeRDP needs a JSON parser for Entra token handling. Install `jansson-devel` (Fedora), `libjansson-dev` (Debian/Ubuntu), or `jansson` (Arch).
+
+**`The following required packages were not found: sso-mib>=0.5.0`.**
+Only happens if you forced `WITH_SSO_MIB=ON` without the library installed. The default is `auto`, which detects it and builds without it when absent. It is optional and unrelated to webview sign-in — install `sso-mib-devel` only if you use a local identity broker.
+
+**The application shows a generic icon.**
+Run `./scripts/diagnose-icon.sh`, which checks each step of the lookup chain.
+
+The most common cause is a stale `icon-theme.cache`. Icon lookups trust that cache over scanning the directory, so a cache written before the icon was installed keeps reporting it absent:
+
+```bash
+rm -f ~/.local/share/icons/hicolor/icon-theme.cache
+gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor
+kbuildsycoca6 --noincremental
+```
+
+If the menu entry is still generic, restart the shell with `systemctl --user restart plasma-plasmashell`, which is quicker than logging out.
+
+A second cause is a missing `~/.local/share/icons/hicolor/index.theme`. A directory without one is not a valid icon theme, so lookups skip it and a correctly installed icon never resolves. `install.sh` now creates it. Fix an existing installation with:
+
+```bash
+cp /usr/share/icons/hicolor/index.theme ~/.local/share/icons/hicolor/
+kbuildsycoca6 --noincremental
+```
+
+Note that on Wayland there is no per-window icon: the compositor matches the window's `app_id` to a desktop entry and reads its `Icon=` line. `QIcon.setWindowIcon` and `StartupWMClass` affect X11 only.
+
+**Preflight reports a library as missing that you know is installed.**
+pkg-config file names differ between distributions. Find the real name with `pkg-config --list-all | grep -i <library>`, then either re-run with `SKIP_PREFLIGHT=1` or open an issue with the name so it can be added to the list.
+
+**`/usr/bin/python3: No module named pip`.**
+Some distributions do not install pip with Python. `install.sh` now handles this, but to do it by hand: `sudo dnf install python3-pip python3-pyqt6`.
+
+**`error: externally-managed-environment`.**
+The system Python is marked externally managed (PEP 668). `install.sh` retries automatically with `--break-system-packages`, which only affects `~/.local`, never system packages.
+
+**The app finds `/usr/bin/sdl-freerdp` and warns about WebView.**
+Expected before you have run `build-freerdp.sh`. Binaries are deliberately never taken from a CMake build directory, per upstream guidance, so a build tree at `~/FreeRDP/build/...` will not be detected. Either run `./scripts/build-freerdp.sh` to install into the private prefix, or use **Browse** to select a binary explicitly.
+
+**Sign-in prints a URL instead of opening a browser window.**
+Your FreeRDP binary lacks webview support. The *FreeRDP binary* section will say so in orange. Either run `./scripts/build-freerdp.sh`, or browse to a build made with `WITH_WEBVIEW=ON`.
+
+**`Cannot find KDC for realm`.**
+`/sec:aad` is missing. The app always sets it, so this points at a stale profile or something in *Extra flags* overriding it.
+
+**Command line parsing failed at 'azure'.**
+A quote character got pasted into a field. The app strips these automatically now; if you see it, check *Extra flags*.
+
+**Horizontal line artifacts on Wayland.**
+Smart sizing combined with fullscreen is a FreeRDP SDL3 rendering bug, tracked upstream as [FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204). The app warns when both are enabled — use a fixed resolution with fullscreen instead.
+
+**The sign-in window never appears on Wayland.**
+Leave *Force X11 video driver* enabled. The webview popup does not map reliably on native Wayland.
+
+**Host does not resolve.**
+The app warns before connecting. Entra-joined machines often aren't in corporate DNS; add an `/etc/hosts` entry.
+
+---
+
+## Building the Flatpak locally
+
+```bash
+flatpak install -y flathub org.gnome.Sdk//48 org.gnome.Platform//48 \
+    com.riverbankcomputing.PyQt.BaseApp//6.7
+flatpak-builder --user --install --force-clean build-dir \
+    packaging/flatpak/io.github.themew2.EntraRDP.yml
+flatpak run io.github.themew2.EntraRDP
+```
+
+The manifest uses the **GNOME runtime** rather than KDE, because FreeRDP's webview helper requires WebKitGTK, which GNOME's runtime ships and KDE's does not. Qt arrives via the PyQt BaseApp extension.
+
+---
+
+## Project layout
+
+```
+src/entrardp/
+    config.py     Flag definitions, input sanitizing, profile storage
+    freerdp.py    Binary discovery, webview detection, command assembly
+    gui.py        PyQt6 interface
+scripts/
+    build-freerdp.sh   Compiles FreeRDP with WITH_WEBVIEW=ON, with
+                       preflight dependency checks and post-build verification
+    install.sh         Calls build-freerdp.sh, then installs the GUI
+                       and registers the desktop entry
+packaging/flatpak/     Flatpak manifest
+data/                  Desktop entry, AppStream metainfo, icon
+```
+
+---
+
+## The original guide
+
+The step-by-step build walkthrough this project grew out of is preserved at
+[docs/BUILD-GUIDE.md](docs/BUILD-GUIDE.md), along with the original `rdp-aad.sh`
+wrapper script. Useful if you would rather understand each step than run a script.
+
+## Credits
+
+Built on [FreeRDP](https://github.com/FreeRDP/FreeRDP). The build recipe originated from working out webview-enabled Entra authentication on Fedora and Nobara; see [FreeRDP#13201](https://github.com/FreeRDP/FreeRDP/issues/13201).
 
 ## License
 
-Released under [The Unlicense](LICENSE) — public domain, no conditions, use it however you'd like.
-
-## Acknowledgments
-
-Thanks to [@akallabeth](https://github.com/akallabeth) on the FreeRDP team for reviewing this work, correcting several details in this guide, and confirming/fixing the `/smart-sizing` rendering bug documented above. See the discussion on [FreeRDP/FreeRDP#13201](https://github.com/FreeRDP/FreeRDP/issues/13201).
+Apache-2.0, matching FreeRDP.

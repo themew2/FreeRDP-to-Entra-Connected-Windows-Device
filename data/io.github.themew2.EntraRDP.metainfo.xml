@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.themew2.EntraRDP</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+
+  <name>Entra RDP</name>
+  <summary>Remote desktop for Entra ID joined Windows hosts</summary>
+
+  <description>
+    <p>
+      Entra RDP connects to Microsoft Entra ID (formerly Azure AD) joined Windows
+      machines using native web account sign-in — the Linux equivalent of the
+      &quot;Use a web account to sign in to the remote computer&quot; option in the
+      Windows Remote Desktop client.
+    </p>
+    <p>
+      Distribution-packaged FreeRDP is normally built without WebView support, which
+      downgrades sign-in to printing a login URL that must be pasted into a browser
+      and pasted back. Entra RDP detects whether the FreeRDP binary in use actually
+      supports the embedded browser, and warns clearly when it does not.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Native embedded browser sign-in for Entra ID accounts</li>
+      <li>Named connection profiles for multiple hosts and tenants</li>
+      <li>Toggles for audio, microphone, clipboard, drive and printer redirection</li>
+      <li>Live command preview, so nothing is hidden behind the interface</li>
+      <li>Automatic detection of WebView capability in the FreeRDP binary</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.themew2.EntraRDP.desktop</launchable>
+
+  <url type="homepage">https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device</url>
+  <url type="bugtracker">https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/issues</url>
+
+  <developer id="io.github.themew2">
+    <name>themew2</name>
+  </developer>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">640</display_length>
+  </requires>
+
+  <!-- Screenshots are required by Flathub. Replace these URLs with real ones
+       committed to the repository before submitting. -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>Configuring a connection profile</caption>
+      <image>https://raw.githubusercontent.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/main/data/screenshots/main-window.png</image>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-08-20">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
