@@ -83,6 +83,7 @@ class MainWindow(QWidget):
         self._reload_profiles()
         self.bin_in.setText(find_binary() or "")
         self._on_binary_changed()
+        self._restore_last_profile()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -371,6 +372,18 @@ class MainWindow(QWidget):
         self.profile_box.setCurrentText(typed)
         self.profile_box.blockSignals(False)
 
+    def _restore_last_profile(self):
+        """Reopen with the profile that was last saved or loaded.
+
+        Returns quietly when nothing was recorded, or when the recorded
+        profile has since been deleted.
+        """
+        name = self.store.last_used
+        if not name:
+            return
+        self.profile_box.setCurrentText(name)
+        self._apply_profile(name)
+
     def _apply_profile(self, name: str):
         data = self.store.profiles.get(name)
         if not data:
@@ -389,6 +402,7 @@ class MainWindow(QWidget):
         self.height_in.setValue(data.get("height", 1440))
         self.force_x11.setChecked(data.get("force_x11", True))
         self.extra_in.setText(data.get("extra", ""))
+        self.store.last_used = name
         self._refresh()
         self._set_status(f"Loaded '{name}'", "muted")
 
@@ -415,6 +429,7 @@ class MainWindow(QWidget):
             "force_x11": conn.force_x11,
             "extra": clean_value(conn.extra),
         })
+        self.store.last_used = name
         self._reload_profiles()
         self.profile_box.setCurrentText(name)
         self._set_status(f"Saved '{name}'", "ok")
@@ -428,6 +443,8 @@ class MainWindow(QWidget):
                 QMessageBox.StandardButton.Yes:
             return
         self.store.delete(name)
+        if self.store.last_used == name:
+            self.store.last_used = None
         self.profile_box.setCurrentText("")
         self._reload_profiles()
         self.profile_box.setCurrentText("")

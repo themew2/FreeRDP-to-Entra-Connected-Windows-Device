@@ -12,6 +12,9 @@ APP_NAME = "Entra RDP"
 # Honour XDG_CONFIG_HOME when set, falling back to the usual location.
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "entrardp"
 CONFIG_FILE = CONFIG_DIR / "profiles.json"
+# Kept separate from profiles.json so UI state cannot collide with a profile
+# name, and so deleting one does not disturb the other.
+STATE_FILE = CONFIG_DIR / "state.json"
 
 # Session option toggles: key, label, flag, default, tooltip.
 #
@@ -143,3 +146,26 @@ class ProfileStore:
 
     def names(self) -> list[str]:
         return sorted(self.profiles)
+
+    # -- last used profile ------------------------------------------------
+
+    @property
+    def last_used(self) -> str | None:
+        """Name of the most recently loaded or saved profile, if it exists."""
+        try:
+            name = json.loads(STATE_FILE.read_text()).get("last_profile")
+        except (json.JSONDecodeError, OSError, AttributeError):
+            return None
+        # A profile deleted since the state was written should not be returned.
+        return name if name in self.profiles else None
+
+    @last_used.setter
+    def last_used(self, name: str | None) -> None:
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STATE_FILE.write_text(json.dumps({"last_profile": name}, indent=2))
+            STATE_FILE.chmod(0o600)
+        except OSError:
+            # Remembering the last profile is a convenience; failing to record
+            # it should never prevent the application from working.
+            pass

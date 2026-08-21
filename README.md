@@ -171,7 +171,9 @@ Fill in three fields and press Connect:
 | **User name** | `you@yourdomain.com` |
 | **Tenant ID** | Your Entra tenant GUID, from Azure Portal → Microsoft Entra ID → Overview. |
 
-Save the combination as a named profile to reuse it. Profiles live in `~/.config/entrardp/profiles.json`, mode `600`.
+Save the combination as a named profile to reuse it. The app reopens on whichever profile you last saved or loaded.
+
+Profiles live in `~/.config/entrardp/profiles.json` and the last-used name in `~/.config/entrardp/state.json`, both mode `600`.
 
 **No credentials are ever stored.** Authentication happens entirely inside the Entra webview. The app keeps only hostnames, usernames, and tenant IDs.
 
