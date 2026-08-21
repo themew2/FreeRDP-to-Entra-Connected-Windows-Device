@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1
+          python -m pip install --upgrade pip
+          pip install . ruff
+      - name: Lint
+        run: ruff check src/
+      - name: Build a command headlessly
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -c "
+          from entrardp.freerdp import Connection
+          from entrardp.config import TOGGLES
+          c = Connection(binary='/bin/true', host='h', tenant_id='t', username='u',
+                         toggles={k: d for k,_l,_f,d,_t in TOGGLES})
+          cmd = c.command()
+          assert '/sec:aad' in cmd, 'missing /sec:aad'
+          assert any(a.startswith('/azure:tenantid:') for a in cmd)
+          print(' '.join(cmd))
+          "
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck scripts/*.sh
+
+  appstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils
+      - run: desktop-file-validate data/*.desktop
+      - run: appstreamcli validate --no-net data/*.metainfo.xml || true

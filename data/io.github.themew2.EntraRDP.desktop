@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Entra RDP
+GenericName=Remote Desktop
+Comment=Connect to Entra ID joined Windows hosts with native web sign-in
+Exec=entrardp
+Icon=io.github.themew2.EntraRDP
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=RDP;FreeRDP;Remote;Desktop;Entra;Azure;AAD;Windows;
+StartupNotify=true
+# X11 only: matches the window's WM_CLASS so the task manager associates it
+# with this entry. On Wayland the equivalent is app_id, which Qt takes from
+# QGuiApplication.setDesktopFileName() and which already matches this file.
+StartupWMClass=io.github.themew2.EntraRDP
