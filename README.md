@@ -28,19 +28,32 @@ Both builds are named `sdl-freerdp`. **Name equality is not build equality** —
 
 ---
 
-## Install
+## Platform support
 
-### Flatpak
+| Platform | Status |
+|---|---|
+| **Fedora 44** | Tested end to end |
+| Other Fedora / RHEL / derivatives | Should work; same `dnf` package list |
+| Debian / Ubuntu | **Untested.** An `apt` list exists but has not been verified |
+| Arch | **Untested.** A `pacman` list exists but has not been verified |
+| openSUSE, Void, Gentoo, NixOS | No automatic dependency install. Use `SKIP_DEPS=1` |
+| Snap | Not supported |
 
-The Flatpak bundles its own webview-enabled FreeRDP, so there is nothing to compile.
+On any distribution, the preflight check verifies prerequisites through `pkg-config` before compiling, so an incorrect package list produces a precise list of what is missing rather than an obscure build failure. On an untested platform, expect to install one or two packages by hand:
 
 ```bash
-flatpak install flathub io.github.themew2.EntraRDP
+SKIP_DEPS=1 ./scripts/build-freerdp.sh
 ```
 
-> Not yet on Flathub. To build it yourself, see [packaging/flatpak](packaging/flatpak/).
+Reports of what was actually needed on your distribution are welcome — the untested lists only improve that way.
+
+---
+
+## Install
 
 ### From source
+
+Tested on Fedora 44. See [Platform support](#platform-support) for other distributions.
 
 ```bash
 git clone https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device.git
@@ -249,20 +262,6 @@ The app warns before connecting. Entra-joined machines often aren't in corporate
 
 ---
 
-## Building the Flatpak locally
-
-```bash
-flatpak install -y flathub org.gnome.Sdk//48 org.gnome.Platform//48 \
-    com.riverbankcomputing.PyQt.BaseApp//6.7
-flatpak-builder --user --install --force-clean build-dir \
-    packaging/flatpak/io.github.themew2.EntraRDP.yml
-flatpak run io.github.themew2.EntraRDP
-```
-
-The manifest uses the **GNOME runtime** rather than KDE, because FreeRDP's webview helper requires WebKitGTK, which GNOME's runtime ships and KDE's does not. Qt arrives via the PyQt BaseApp extension.
-
----
-
 ## Project layout
 
 ```
@@ -275,7 +274,6 @@ scripts/
                        preflight dependency checks and post-build verification
     install.sh         Calls build-freerdp.sh, then installs the GUI
                        and registers the desktop entry
-packaging/flatpak/     Flatpak manifest
 data/                  Desktop entry, AppStream metainfo, icon
 ```
 

@@ -6,11 +6,6 @@ dist/
 .venv/
 venv/
 
-# Flatpak
-.flatpak-builder/
-build-dir/
-repo/
-
 # Never commit real connection data: profiles contain tenant IDs and hostnames
 profiles.json
 *.local.json

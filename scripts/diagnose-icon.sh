@@ -14,7 +14,11 @@ echo "Desktop entry"
 DESK="$HOME/.local/share/applications/$APP_ID.desktop"
 if [[ -f "$DESK" ]]; then
     ok "present: $DESK"
-    grep -q "^Icon=$APP_ID" "$DESK" && ok "Icon= line correct" || bad "Icon= line missing or wrong"
+    if grep -q "^Icon=$APP_ID" "$DESK"; then
+        ok "Icon= line correct"
+    else
+        bad "Icon= line missing or wrong: $(grep '^Icon=' "$DESK" || echo '(no Icon= line)')"
+    fi
     if grep -q "^StartupWMClass=" "$DESK"; then
         ok "StartupWMClass=$(grep '^StartupWMClass=' "$DESK" | cut -d= -f2-)"
     else
@@ -26,7 +30,11 @@ fi
 
 echo "Icon file"
 ICON="$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
-[[ -f "$ICON" ]] && ok "present: $ICON" || bad "missing: $ICON  — run ./scripts/install.sh"
+if [[ -f "$ICON" ]]; then
+    ok "present: $ICON"
+else
+    bad "missing: $ICON  — run ./scripts/install.sh"
+fi
 
 echo "Icon theme index"
 # A directory without index.theme is not a theme, and lookups skip it, so a

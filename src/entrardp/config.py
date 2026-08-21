@@ -9,7 +9,7 @@ from pathlib import Path
 APP_ID = "io.github.themew2.EntraRDP"
 APP_NAME = "Entra RDP"
 
-# Flatpak exports XDG_CONFIG_HOME into the sandbox; honour it either way.
+# Honour XDG_CONFIG_HOME when set, falling back to the usual location.
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "entrardp"
 CONFIG_FILE = CONFIG_DIR / "profiles.json"
 

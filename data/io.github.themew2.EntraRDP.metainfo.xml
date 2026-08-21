@@ -57,6 +57,9 @@
     </screenshot>
   </screenshots>
 
+  <!-- The uppercase letters in the component ID draw a pedantic AppStream
+       warning. Uppercase is permitted and widely used (matching the CamelCase
+       convention of Flathub app IDs), so this is informational only. -->
   <content_rating type="oars-1.1"/>
 
   <releases>

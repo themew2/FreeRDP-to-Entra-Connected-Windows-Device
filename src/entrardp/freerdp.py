@@ -28,7 +28,7 @@ BIN_NAMES = ["sdl-freerdp", "sdl3-freerdp", "sdl-freerdp3"]
 # build-tree binaries pick up wrong library paths and resource locations.
 PREFERRED_PATHS = [
     Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
-    Path("/app/bin/sdl-freerdp"),          # Flatpak
+    Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
     Path("/opt/freerdp-nightly/bin/sdl-freerdp"),  # upstream nightly packages
     Path("/usr/local/bin/sdl-freerdp"),
 ]
