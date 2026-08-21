@@ -17,8 +17,8 @@ PREFIX="${ENTRARDP_PREFIX:-$HOME/.local/share/entrardp/freerdp}"
 SRC="${ENTRARDP_SRC:-$HOME/.cache/entrardp/FreeRDP}"
 JOBS="${JOBS:-$(nproc)}"
 BRANCH="${FREERDP_BRANCH:-master}"
-# Webview support requires FreeRDP 3.16.0 or newer.
-MIN_VERSION="3.16.0"
+# Note: webview support requires FreeRDP 3.16.0 or newer. Building from a
+# recent branch satisfies this; the post-install check confirms the result.
 # Automatic token retrieval via a local identity broker. Optional, and not
 # required for the webview sign-in flow. "auto" enables it only when the
 # sso-mib library is actually present; set ON or OFF to force either way.
@@ -75,6 +75,7 @@ install_deps_dnf() {
 }
 
 install_deps_apt() {
+    warn "The Debian/Ubuntu package list is UNTESTED. Preflight will verify the result."
     info "Installing build dependencies (apt)"
     sudo apt-get update
     sudo apt-get install -y \
@@ -95,6 +96,7 @@ install_deps_apt() {
 }
 
 install_deps_pacman() {
+    warn "The Arch package list is UNTESTED. Preflight will verify the result."
     info "Installing build dependencies (pacman)"
     sudo pacman -S --needed --noconfirm \
         cmake ninja gcc git pkgconf systemd-libs util-linux-libs \
@@ -122,7 +124,19 @@ install_deps() {
     elif command -v pacman >/dev/null; then install_deps_pacman
     else
         set -e
-        die "Unsupported package manager. Install the deps listed in the README, then re-run with SKIP_DEPS=1."
+        warn "No supported package manager found (dnf, apt, pacman)."
+        warn ""
+        warn "Install development packages providing these pkg-config modules,"
+        warn "then re-run with SKIP_DEPS=1:"
+        warn "  webkitgtk-6.0   (or webkit2gtk-4.1)   <- required for WITH_WEBVIEW"
+        warn "  sdl3, sdl3-ttf, sdl3-image"
+        warn "  openssl, libpulse, krb5, zlib, xkbcommon"
+        warn "  jansson (or json-c / cjson)"
+        warn "  libavcodec, libavformat, libavutil, libswresample, libswscale"
+        warn "  liburiparser, cairo, libusb-1.0, cups, wayland, wayland-protocols"
+        warn ""
+        warn "Plus: cmake, ninja, a C/C++ compiler, git, pkg-config."
+        die "Cannot install dependencies automatically on this system."
     fi
     local rc=$?
     set -e

@@ -28,19 +28,39 @@ Both builds are named `sdl-freerdp`. **Name equality is not build equality** —
 
 ---
 
+## Platform support
+
+| Platform | Status |
+|---|---|
+| **Fedora 44** | Tested end to end |
+| Other Fedora / RHEL / derivatives | Should work; same `dnf` package list |
+| Debian / Ubuntu | **Untested.** An `apt` list exists but has not been verified |
+| Arch | **Untested.** A `pacman` list exists but has not been verified |
+| openSUSE, Void, Gentoo, NixOS | No automatic dependency install. Use `SKIP_DEPS=1` |
+| Snap | Not supported |
+| Flatpak | Manifest present but **not yet built or published** |
+
+On any distribution, the preflight check verifies prerequisites through `pkg-config` before compiling, so an incorrect package list produces a precise list of what is missing rather than an obscure build failure. On an untested platform, expect to install one or two packages by hand:
+
+```bash
+SKIP_DEPS=1 ./scripts/build-freerdp.sh
+```
+
+Reports of what was actually needed on your distribution are welcome — the untested lists only improve that way.
+
+**A distribution-agnostic Flatpak is the intended long-term answer**, since it bundles a webview-enabled FreeRDP and removes the compile entirely. See [packaging/flatpak](packaging/flatpak/) for its current state.
+
+---
+
 ## Install
 
 ### Flatpak
 
-The Flatpak bundles its own webview-enabled FreeRDP, so there is nothing to compile.
-
-```bash
-flatpak install flathub io.github.themew2.EntraRDP
-```
-
-> Not yet on Flathub. To build it yourself, see [packaging/flatpak](packaging/flatpak/).
+> **Not yet available.** The manifest in [packaging/flatpak](packaging/flatpak/) has not been built or submitted to Flathub, and still needs reconciling with FreeRDP's own upstream manifest. Once published it will bundle a webview-enabled FreeRDP, making this the recommended route on every distribution.
 
 ### From source
+
+Tested on Fedora 44. See [Platform support](#platform-support) for other distributions.
 
 ```bash
 git clone https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device.git
