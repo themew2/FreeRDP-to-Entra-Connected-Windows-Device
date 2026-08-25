@@ -281,6 +281,23 @@ resolve_sso_mib() {
     fi
 }
 
+# Confirms a cmake option actually took, by reading CMakeCache.txt directly.
+#
+# Not `cmake -L "$build" | grep -q ...`: under `set -o pipefail` grep -q exits
+# on the first match and closes the pipe, cmake takes SIGPIPE writing the rest
+# of its output, and the pipeline reports 141 — turning a successful match into
+# a failure. Whether that happens depends on how much output is still queued
+# behind the match, so it fires inconsistently across machines and looks like a
+# missing dependency. `cmake -L` also silently re-runs configure, which is slow
+# and means the value tested is not the one from the configure pass just logged.
+#
+# Reads $build from the calling scope.
+require_cache_on() {
+    local var=$1 hint=$2
+    grep -qx "${var}:BOOL=ON" "$build/CMakeCache.txt" \
+        || die "$var did not initialise. $hint"
+}
+
 configure_and_build() {
     local build="$SRC/build"
     resolve_sso_mib
@@ -302,19 +319,13 @@ configure_and_build() {
         -DWITH_CUPS=ON \
         -DBUILD_TESTING=OFF
 
-    # WITH_WEBVIEW only becomes a real option once the SDL client subdirectory
-    # is processed. If SDL got disabled, cmake silently ignores the flag and
-    # the resulting binary looks fine but has no popup. Fail loudly instead.
-    if ! cmake -L "$build" 2>/dev/null | grep -q "WITH_WEBVIEW:BOOL=ON"; then
-        die "WITH_WEBVIEW did not initialise. WebKitGTK development headers are probably missing."
-    fi
-    # WITH_PULSE defaults to OFF upstream and silently stays off when the
-    # PulseAudio headers are missing at configure time. Distro packages enable
-    # it, so a source build that quietly loses audio is a surprise worth
-    # catching here rather than mid-call.
-    if ! cmake -L "$build" 2>/dev/null | grep -q "WITH_PULSE:BOOL=ON"; then
-        die "WITH_PULSE did not initialise. Install the PulseAudio development headers and re-run."
-    fi
+    # Several WITH_* flags only get defined once the subdirectory that owns
+    # them is processed (WITH_WEBVIEW lives under client/SDL/common/aad).
+    # If the guard didn't hold, cmake silently ignores -D and the build
+    # succeeds with the feature missing. Fail before the long compile instead.
+    require_cache_on WITH_CLIENT_SDL "SDL client disabled; WITH_WEBVIEW cannot initialise without it."
+    require_cache_on WITH_WEBVIEW    "WebKitGTK development headers are probably missing."
+    require_cache_on WITH_PULSE      "Install the PulseAudio development headers and re-run."
 
     info "Building with $JOBS jobs (this takes a while)"
     cmake --build "$build" -j "$JOBS"
@@ -327,9 +338,23 @@ configure_and_build() {
 verify() {
     local bin="$PREFIX/bin/sdl-freerdp"
     [[ -x "$bin" ]] || die "Expected binary missing at $bin"
-    if "$bin" /buildconfig 2>&1 | tr ' ' '\n' | grep -qi "WITH_WEBVIEW=ON"; then
+
+    # Captured with command substitution rather than piped into grep, for the
+    # same SIGPIPE reason described above require_cache_on: `cmd | grep -q`
+    # under pipefail reports 141 when grep exits early, which would report a
+    # perfectly good build as unverified. /buildconfig output is long enough
+    # that this is the likely case, not the edge case.
+    #
+    # `|| true` on both: /buildconfig is not guaranteed to exit 0, and ldd
+    # fails on static or non-ELF input.
+    local cfg="" libs=""
+    cfg="$("$bin" /buildconfig 2>&1 || true)"
+    libs="$(ldd "$bin" 2>/dev/null || true)"
+
+    # Whitespace stripped so the match survives "WITH_WEBVIEW = ON" spacing.
+    if [[ "${cfg//[[:space:]]/}" == *"WITH_WEBVIEW=ON"* ]]; then
         info "Verified: WITH_WEBVIEW=ON"
-    elif ldd "$bin" 2>/dev/null | grep -qi webkit; then
+    elif [[ "${libs,,}" == *webkit* ]]; then
         info "Verified: linked against WebKitGTK"
     else
         warn "Could not confirm webview support. Sign-in may fall back to the URL flow."
