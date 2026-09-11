@@ -391,8 +391,23 @@ class MainWindow(QWidget):
         self.host_in.setText(data.get("host", ""))
         self.user_in.setText(data.get("user", ""))
         self.tenant_in.setText(data.get("tenant", ""))
-        if data.get("binary"):
-            self.bin_in.setText(data["binary"])
+
+        # A stored binary path is a preference, not a guarantee. It goes stale
+        # when the build is replaced, removed, or the profile is opened on
+        # another machine, and a profile should not strand the user on a path
+        # that no longer exists. Fall back to detection in that case.
+        stored = data.get("binary", "")
+        if stored and is_usable(stored):
+            self.bin_in.setText(stored)
+        else:
+            detected = find_binary()
+            if detected:
+                self.bin_in.setText(detected)
+                if stored:
+                    self._set_status(
+                        f"'{name}' pointed at a binary that is gone; using {detected}",
+                        "warn",
+                    )
         for key, widget in self.toggle_widgets.items():
             widget.blockSignals(True)
             widget.setChecked(data.get("toggles", {}).get(key, widget.isChecked()))

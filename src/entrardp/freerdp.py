@@ -19,7 +19,10 @@ from pathlib import Path
 
 from .config import TOGGLES, clean_value, expand_flag
 
-BIN_NAMES = ["sdl-freerdp", "sdl3-freerdp", "sdl-freerdp3"]
+# Naming varies with WITH_CLIENT_SDL_VERSIONED: distribution packages commonly
+# build it OFF (sdl-freerdp), while FreeRDP's own nightly spec sets it ON
+# (sdl-freerdp3). Both are the same client.
+BIN_NAMES = ["sdl-freerdp3", "sdl-freerdp", "sdl3-freerdp"]
 
 # Searched in order. All are *installed* prefixes.
 #
@@ -27,11 +30,16 @@ BIN_NAMES = ["sdl-freerdp", "sdl3-freerdp", "sdl-freerdp3"]
 # guidance is to run `cmake --build <dir> --target install` and use the result;
 # build-tree binaries pick up wrong library paths and resource locations.
 PREFERRED_PATHS = [
-    Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
+    # Packaged builds first. These are tracked by the system package manager,
+    # so they receive rebuilds and removals as a unit and their version is
+    # visible through rpm/dpkg. A loose build under ~/.local is invisible to
+    # all of that and tends to drift, so it ranks below them even though it is
+    # equally functional.
+    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
+    Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),  # nightly spec sets WITH_CLIENT_SDL_VERSIONED=ON
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp"),  # upstream nightly packages
     Path("/usr/local/bin/sdl-freerdp"),
+    Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
 ]
 
 # Webview support landed upstream in this release; older builds cannot have it

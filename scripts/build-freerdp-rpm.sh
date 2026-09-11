@@ -77,7 +77,7 @@ resolve_version() {
 # ------------------------------------------------------------- prerequisites
 
 info "Installing RPM build tooling"
-sudo dnf install -y rpm-build rpmdevtools git clang
+sudo dnf install -y rpm-build rpmdevtools git clang dnf-plugins-core
 
 # --------------------------------------------------------------- get sources
 
@@ -134,6 +134,49 @@ grep -E '^[[:space:]]*-D(WITH_WEBVIEW|CMAKE_BUILD_TYPE|WITH_SANITIZE_ADDRESS)' "
 
 # ---------------------------------------------------------------- build rpm
 
+# Install the spec's declared build dependencies before building.
+#
+# Deliberately driven by the spec rather than a list maintained here: the spec
+# is the authority on what this version needs, and `dnf builddep` reads it
+# directly. That is the whole advantage of the RPM route over guessing package
+# names, so hardcoding a list would give it up.
+install_build_deps() {
+    info "Installing build dependencies declared by the spec"
+    if sudo dnf builddep -y "$SPEC"; then
+        return 0
+    fi
+
+    warn "dnf builddep failed. This is usually an either/or dependency it"
+    warn "cannot resolve automatically, such as (fdk-aac-devel or"
+    warn "fdk-aac-free-devel). Trying the Fedora-native alternatives."
+
+    # Best effort: --skip-unavailable so a package missing on this release
+    # does not sink the whole transaction.
+    sudo dnf install -y --skip-unavailable \
+        dbus-glib-devel libXtst-devel libasan \
+        libcbor-devel libfido2-devel libjpeg-turbo-devel libv4l-devel \
+        libva-devel libwebp-devel pcsc-lite-devel uuid-devel || true
+
+    # The either/or dependencies dnf cannot resolve on its own. Requested by
+    # pkg-config capability where possible so whichever provider is already
+    # installed satisfies it: Fedora ships patent-stripped -free variants
+    # while RPM Fusion ships the full builds, and the two conflict. Forcing a
+    # specific package name would swap out a user's existing multimedia stack
+    # as a side effect of building an RDP client.
+    if ! rpm -q --whatprovides "pkgconfig(libavcodec)" >/dev/null 2>&1; then
+        sudo dnf install -y ffmpeg-devel 2>/dev/null \
+            || sudo dnf install -y ffmpeg-free-devel 2>/dev/null \
+            || warn "Could not install FFmpeg development headers."
+    fi
+    if ! rpm -q --whatprovides "pkgconfig(fdk-aac)" >/dev/null 2>&1; then
+        sudo dnf install -y fdk-aac-free-devel 2>/dev/null \
+            || sudo dnf install -y fdk-aac-devel 2>/dev/null \
+            || warn "Could not install fdk-aac development headers."
+    fi
+}
+
+install_build_deps
+
 info "Building the RPM (this takes a while; the spec also runs the test suite)"
 cd "$SRC"
 bash "$CREATE" || die "create_rpm.sh failed. Its output above should say why."
@@ -161,8 +204,19 @@ if [[ "$AUTO_INSTALL" == "1" ]]; then
     info "Installing"
     sudo dnf install -y "${RPMS[@]}"
 
-    BIN=/opt/freerdp-nightly/bin/sdl-freerdp
-    if [[ -x "$BIN" ]]; then
+    # The nightly spec sets WITH_CLIENT_SDL_VERSIONED=ON, so the SDL client
+    # installs as sdl-freerdp3 rather than sdl-freerdp. Distribution packages
+    # commonly build it unversioned, so both names have to be handled.
+    BIN=""
+    for candidate in /opt/freerdp-nightly/bin/sdl-freerdp3 \
+                     /opt/freerdp-nightly/bin/sdl-freerdp; do
+        if [[ -x "$candidate" ]]; then
+            BIN="$candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$BIN" ]]; then
         # Captured with command substitution rather than piped into grep -q.
         # Under `set -o pipefail`, grep -q exits on the first match and closes
         # the pipe; the upstream command takes SIGPIPE writing the rest of its
@@ -179,7 +233,9 @@ if [[ "$AUTO_INSTALL" == "1" ]]; then
         fi
         info "Binary ready at $BIN"
     else
-        warn "Expected binary not found at $BIN"
+        warn "No SDL client found under /opt/freerdp-nightly/bin."
+        warn "Contents:"
+        ls -1 /opt/freerdp-nightly/bin 2>/dev/null | sed 's/^/    /' || true
     fi
 else
     info "AUTO_INSTALL=0; install manually with: sudo dnf install ${RPMS[*]}"
