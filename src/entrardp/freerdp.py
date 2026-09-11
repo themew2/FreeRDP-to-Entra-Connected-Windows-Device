@@ -29,6 +29,7 @@ BIN_NAMES = ["sdl-freerdp", "sdl3-freerdp", "sdl-freerdp3"]
 PREFERRED_PATHS = [
     Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
+    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),  # nightly spec sets WITH_CLIENT_SDL_VERSIONED=ON
     Path("/opt/freerdp-nightly/bin/sdl-freerdp"),  # upstream nightly packages
     Path("/usr/local/bin/sdl-freerdp"),
 ]

@@ -32,28 +32,16 @@ Both builds are named `sdl-freerdp`. **Name equality is not build equality** —
 
 | Platform | Status |
 |---|---|
-| **Fedora 44** | Tested end to end |
-| Other Fedora / RHEL / derivatives | Should work; same `dnf` package list |
-| Debian / Ubuntu | **Untested.** An `apt` list exists but has not been verified |
-| Arch | **Untested.** A `pacman` list exists but has not been verified |
-| openSUSE, Void, Gentoo, NixOS | No automatic dependency install. Use `SKIP_DEPS=1` |
-| Snap | Not supported |
+| **Fedora 44** | Tested end to end via the RPM path |
+| Other Fedora / RHEL / openSUSE | Should work; builds from upstream's own spec |
+| Debian / Ubuntu / Arch | **Untested.** Falls back to the source build, whose dependency lists have only been exercised on Fedora |
+| Anything else | No automatic FreeRDP build. Supply your own binary and use `SKIP_FREERDP=1` |
 
-On any distribution, the preflight check verifies prerequisites through `pkg-config` before compiling, so an incorrect package list produces a precise list of what is missing rather than an obscure build failure. On an untested platform, expect to install one or two packages by hand:
+The GUI itself is distribution-independent — it needs a FreeRDP binary built with `WITH_WEBVIEW=ON` and does not care where that came from. Only the FreeRDP build differs by platform.
 
-```bash
-SKIP_DEPS=1 ./scripts/build-freerdp.sh
-```
-
-Reports of what was actually needed on your distribution are welcome — the untested lists only improve that way.
-
----
+On untested platforms the source build runs a preflight check through `pkg-config` before compiling, so a wrong package name produces a precise list of what is missing rather than an obscure build failure. Reports of what was actually needed on your distribution are welcome.
 
 ## Install
-
-### From source
-
-Tested on Fedora 44. See [Platform support](#platform-support) for other distributions.
 
 ```bash
 git clone https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device.git
@@ -61,84 +49,99 @@ cd FreeRDP-to-Entra-Connected-Windows-Device
 ./scripts/install.sh
 ```
 
-That single command does everything. Budget **10–30 minutes**, almost all of it compiling FreeRDP, and around 3 GB of disk for the source and build tree.
+One command. It builds a webview-enabled FreeRDP, installs the GUI, and registers the desktop entry. Budget 20–40 minutes, almost all of it compiling. Only the dependency step needs `sudo`.
 
-Only the dependency step needs `sudo`. Everything else installs under your home directory.
+**On RPM systems** it builds through FreeRDP's own packaging, producing a package `dnf` tracks, installed to `/opt/freerdp-nightly`. This is the tested path and the one the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
 
----
+**Elsewhere** it falls back to compiling into a private prefix under `~/.local/share/entrardp`. That path works but its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
 
-## What the scripts do
-
-Two scripts, with distinct jobs. `install.sh` is the front door and calls the other one for you.
-
-```
-install.sh
-  ├─ 1. build-freerdp.sh          compile FreeRDP with WITH_WEBVIEW=ON
-  ├─ 2. python3-pip, python3-pyqt6   installed if missing
-  ├─ 3. pip install                  the app, to ~/.local/bin/entrardp
-  └─ 4. desktop entry, icon, AppStream metainfo
-```
-
-### `scripts/build-freerdp.sh`
-
-Produces a FreeRDP binary that Fedora, Debian, and Arch do not ship: one compiled with `-DWITH_WEBVIEW=ON`.
-
-| Phase | What happens |
-|---|---|
-| Dependencies | Detects `dnf` / `apt` / `pacman` and installs the toolchain and headers |
-| **Preflight** | Verifies every prerequisite with `pkg-config` and reports *all* missing ones at once |
-| Source | Shallow-clones FreeRDP to `~/.cache/entrardp/FreeRDP` |
-| Configure | `-DWITH_WEBVIEW=ON -DWITH_AAD=ON -DWITH_SSO_MIB=ON -DWITH_PULSE=ON` |
-| **Gate** | Aborts unless CMakeCache confirms `WITH_WEBVIEW:BOOL=ON` and `WITH_PULSE:BOOL=ON` |
-| Build & install | `cmake --build`, then `--target install` |
-| **Verify** | Runs `/buildconfig` on the installed binary to confirm webview is really on |
-
-The three checks exist because the failure this script prevents is a *silent* one. CMake accepts a flag it has not yet defined without complaint, so a build can succeed, install cleanly, run fine — and simply lack the feature you asked for. Each check fails loudly at the earliest point it can.
-
-**Installs to `~/.local/share/entrardp/freerdp`.** Your distribution's FreeRDP is never touched, and the two coexist:
-
-| Path | Source | WebView |
-|---|---|---|
-| `/usr/bin/sdl-freerdp` | Distribution package | OFF |
-| `~/.local/share/entrardp/freerdp/bin/sdl-freerdp` | This script | **ON** |
-
-The app searches its own prefix first, so it picks the right one automatically.
-
-Run it on its own when you only need the binary — for example if the GUI is already installed:
-
-```bash
-./scripts/build-freerdp.sh
-```
-
-Useful environment variables:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `SKIP_DEPS=1` | off | Skip package installation; preflight still runs |
-| `SKIP_PREFLIGHT=1` | off | Continue despite preflight warnings, when a library is present under an unexpected pkg-config name |
-| `FREERDP_BRANCH` | `master` | Build a specific tag or branch (must be ≥ 3.16.0) |
-| `ENTRARDP_PREFIX` | `~/.local/share/entrardp/freerdp` | Install somewhere else |
-| `JOBS` | all cores | Limit parallel compilation |
-| `WITH_SSO_MIB` | `auto` | Automatic token retrieval via a local identity broker. Enabled only if the `sso-mib` library is present; set `ON` or `OFF` to force |
-
-### `scripts/install.sh`
-
-The full installation. Runs `build-freerdp.sh`, then installs the GUI and registers it with your desktop.
-
-Skip the compile if you already have a webview-enabled FreeRDP:
+**Already have a webview-enabled FreeRDP?** Skip the compile:
 
 ```bash
 SKIP_FREERDP=1 ./scripts/install.sh
 ```
 
-Then point the app at your binary using the **Browse** button. It will tell you whether that build supports webview.
+Then select your binary in the app's *FreeRDP binary* field. It will tell you whether that build supports webview.
+
+For a faster binary on the RPM path (upstream's nightly spec defaults to a debug build with AddressSanitizer):
+
+```bash
+RELEASE_BUILD=1 ./scripts/install.sh
+```
+
+## What the scripts do
+
+`install.sh` is the entry point and picks a FreeRDP build route for you. The other two are the routes themselves, and can be run directly.
+
+```
+install.sh
+  ├─ build-freerdp-rpm.sh   on RPM systems
+  ├─ build-freerdp.sh       everywhere else
+  ├─ python3-pip, python3-pyqt6   installed if missing
+  ├─ pip install                  the app, to ~/.local/bin/entrardp
+  └─ desktop entry, icons, AppStream metainfo
+```
+
+### `scripts/build-freerdp-rpm.sh` — preferred
+
+Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec` and `packaging/scripts/create_rpm.sh`, patching the spec to set `WITH_WEBVIEW=ON`. The spec already declares the WebKitGTK build dependency, so that is the only change needed.
+
+Better than the source route wherever it works:
+
+- `dnf` owns the result, so `dnf remove freerdp-nightly` uninstalls cleanly
+- build dependencies come from the spec via `dnf builddep`, not a list maintained here
+- installs to `/opt/freerdp-nightly`, coexisting with your distribution's FreeRDP
+- the binary is named `sdl-freerdp3`, since the nightly spec sets `WITH_CLIENT_SDL_VERSIONED=ON`
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RELEASE_BUILD=1` | off | Release build without AddressSanitizer, instead of upstream's debug configuration |
+| `AUTO_INSTALL=0` | on | Build the RPM but do not install it |
+| `FREERDP_BRANCH` | newest release tag | Branch or tag to build. Must be ≥ 3.16.0 for webview support |
+
+### `scripts/build-freerdp.sh` — fallback
+
+Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without RPM tooling.
+
+| Phase | What happens |
+|---|---|
+| Dependencies | Detects `dnf` / `apt` / `pacman` and installs the toolchain and headers |
+| Preflight | Verifies every prerequisite with `pkg-config` and reports *all* missing ones at once |
+| Configure | `-DWITH_WEBVIEW=ON -DWITH_AAD=ON -DWITH_PULSE=ON`, `WITH_SSO_MIB` auto-detected |
+| Gate | Aborts unless CMakeCache confirms the flags actually initialised |
+| Build & install | `cmake --build`, then `--target install` |
+| Verify | Runs `/buildconfig` on the installed binary |
+
+The repeated checks exist because the failure they prevent is a *silent* one: CMake accepts a flag it has not yet defined without complaint, so a build can succeed, install cleanly, run fine, and simply lack the feature you asked for.
+
+Its dependency lists are maintained in this repository and have only been exercised on Fedora. The `apt` and `pacman` branches print a warning to that effect.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SKIP_DEPS=1` | off | Skip package installation; preflight still runs |
+| `SKIP_PREFLIGHT=1` | off | Continue despite preflight warnings, when a library is present under an unexpected pkg-config name |
+| `FREERDP_BRANCH` | newest release tag | Branch or tag to build |
+| `ENTRARDP_PREFIX` | `~/.local/share/entrardp/freerdp` | Install somewhere else |
+| `JOBS` | all cores | Limit parallel compilation |
+| `WITH_SSO_MIB` | `auto` | Automatic token retrieval via a local identity broker |
+
+### `scripts/diagnose-icon.sh`
+
+Reports why the application icon may not be appearing, checking each step of the desktop lookup chain.
 
 ### Uninstalling
 
 ```bash
 pip uninstall entrardp
-rm -rf ~/.local/share/entrardp ~/.cache/entrardp
 rm -f ~/.local/share/applications/io.github.themew2.EntraRDP.desktop
+rm -rf ~/.config/entrardp ~/.cache/entrardp
+```
+
+Then remove FreeRDP, depending on which route was used:
+
+```bash
+sudo dnf remove freerdp-nightly        # RPM route
+rm -rf ~/.local/share/entrardp         # source route
 ```
 
 ---
@@ -272,10 +275,12 @@ src/entrardp/
     freerdp.py    Binary discovery, webview detection, command assembly
     gui.py        PyQt6 interface
 scripts/
-    build-freerdp.sh   Compiles FreeRDP with WITH_WEBVIEW=ON, with
-                       preflight dependency checks and post-build verification
-    install.sh         Calls build-freerdp.sh, then installs the GUI
-                       and registers the desktop entry
+    install.sh            Entry point: builds FreeRDP, installs the GUI,
+                          registers the desktop entry
+    build-freerdp-rpm.sh  Builds an RPM via upstream's own packaging
+                          (preferred, used automatically on RPM systems)
+    build-freerdp.sh      Compiles to a private prefix; fallback elsewhere
+    diagnose-icon.sh      Reports why the application icon may not appear
 data/                  Desktop entry, AppStream metainfo, icon
 ```
 
@@ -286,6 +291,45 @@ data/                  Desktop entry, AppStream metainfo, icon
 The step-by-step build walkthrough this project grew out of is preserved at
 [docs/BUILD-GUIDE.md](docs/BUILD-GUIDE.md), along with the original `rdp-aad.sh`
 wrapper script. Useful if you would rather understand each step than run a script.
+
+## Keeping it updated
+
+This is the real tradeoff of building your own FreeRDP, and it deserves to be stated plainly.
+
+Your distribution's package receives security updates through `dnf update`. A binary you built yourself does not — **you own that**. FreeRDP releases often and security fixes are substantial: 3.31.0 alone addressed 22 security advisories, with upstream telling distributors to update as soon as possible.
+
+The build scripts therefore resolve the **newest release tag** at build time rather than defaulting to a branch. FreeRDP tags releases directly, so this always produces a real release without hardcoding a version that goes stale:
+
+```bash
+RELEASE_BUILD=1 ./scripts/build-freerdp-rpm.sh   # RPM systems
+./scripts/build-freerdp.sh                       # everywhere else
+```
+
+To pin a specific version, or to test unreleased changes:
+
+```bash
+FREERDP_BRANCH=3.31.1 ./scripts/build-freerdp-rpm.sh
+FREERDP_BRANCH=master ./scripts/build-freerdp-rpm.sh
+```
+
+### Staying on top of it
+
+Check what you are running:
+
+```bash
+/opt/freerdp-nightly/bin/sdl-freerdp3 /version   # RPM route
+~/.local/share/entrardp/freerdp/bin/sdl-freerdp /version   # source route
+```
+
+Then compare against [FreeRDP releases](https://github.com/FreeRDP/FreeRDP/releases) and rebuild when a security release lands. Watching [security advisories](https://github.com/FreeRDP/FreeRDP/security) or release announcements on [freerdp.com](https://www.freerdp.com/) is the low-effort version.
+
+Realistically this means rebuilding a handful of times a year — not tracking every release, but not never either. An RDP client authenticates and handles untrusted network input, so it is not a good candidate for install-and-forget.
+
+## Upstream direction
+
+FreeRDP maintainers have indicated that browser-based authentication may eventually move out of the client process entirely, into an external helper communicating over IPC — the approach already used by `SSO_MIB` ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+
+If that lands, `WITH_WEBVIEW` as a compile-time flag becomes less central, and this project's build scripts may be unnecessary. The GUI itself is unaffected: it probes whatever binary it is pointed at and reports what that binary supports, rather than assuming a particular mechanism.
 
 ## Credits
 

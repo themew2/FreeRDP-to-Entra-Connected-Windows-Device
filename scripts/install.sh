@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 #
-# One-shot installer: builds webview-enabled FreeRDP, installs the GUI,
-# and registers the desktop entry.
+# Installer: builds a webview-enabled FreeRDP, installs the GUI, and registers
+# the desktop entry.
+#
+# FreeRDP is built through upstream's RPM packaging where that is available,
+# and from source otherwise. Set SKIP_FREERDP=1 if you already have a build
+# with WITH_WEBVIEW=ON.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +14,7 @@ info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
-# ---------------------------------------------------------------- python
+# ----------------------------------------------------------------- python
 
 ensure_python_deps() {
     # Prefer distribution packages for pip and PyQt6. The PyQt6 wheel on PyPI
@@ -23,18 +27,16 @@ ensure_python_deps() {
     [[ ${#missing[@]} -eq 0 ]] && return 0
 
     info "Installing Python prerequisites: ${missing[*]}"
+    local pkgs=()
     if command -v dnf >/dev/null; then
-        local pkgs=()
         [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python3-pip)
         [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python3-pyqt6)
         sudo dnf install -y "${pkgs[@]}"
     elif command -v apt-get >/dev/null; then
-        local pkgs=()
         [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python3-pip)
         [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python3-pyqt6)
         sudo apt-get update && sudo apt-get install -y "${pkgs[@]}"
     elif command -v pacman >/dev/null; then
-        local pkgs=()
         [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python-pip)
         [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python-pyqt6)
         sudo pacman -S --needed --noconfirm "${pkgs[@]}"
@@ -61,15 +63,44 @@ pip_install() {
     fi
 }
 
-# ----------------------------------------------------------------- main
+# ---------------------------------------------------------------- freerdp
 
-if [[ "${SKIP_FREERDP:-0}" != "1" ]]; then
-    info "Building FreeRDP with webview support"
-    "$HERE/scripts/build-freerdp.sh"
-else
-    info "SKIP_FREERDP=1, using an existing FreeRDP build"
-fi
+build_freerdp() {
+    if [[ "${SKIP_FREERDP:-0}" == "1" ]]; then
+        info "SKIP_FREERDP=1, using an existing FreeRDP build"
+        return 0
+    fi
 
+    if command -v rpmbuild >/dev/null && command -v dnf >/dev/null; then
+        # Preferred route. Builds through FreeRDP's own packaging, so the
+        # BuildRequires list comes from upstream rather than being maintained
+        # here, and the result is a package dnf can track and remove.
+        info "Building a webview-enabled FreeRDP package"
+        "$HERE/scripts/build-freerdp-rpm.sh"
+        return 0
+    fi
+
+    if [[ -x "$HERE/scripts/build-freerdp.sh" ]]; then
+        # Fallback for non-RPM systems. The dependency lists in that script are
+        # maintained here and have only been exercised on Fedora, so expect to
+        # install a package or two by hand; its preflight check names them.
+        warn "No RPM tooling found; falling back to the source build."
+        warn "Its dependency lists are untested outside Fedora. Preflight will"
+        warn "report anything missing before the compile starts."
+        "$HERE/scripts/build-freerdp.sh"
+        return 0
+    fi
+
+    warn "No FreeRDP build script available for this system."
+    warn "Install or build a FreeRDP client with WITH_WEBVIEW=ON and select it"
+    warn "in the application. Check an existing install with:"
+    warn "    sdl-freerdp /buildconfig | tr ' ' '\\n' | grep -i WITH_WEBVIEW"
+    info "Continuing with the GUI installation."
+}
+
+# ------------------------------------------------------------------- main
+
+build_freerdp
 ensure_python_deps
 
 info "Installing the application"
@@ -80,12 +111,13 @@ install -Dm644 "$HERE/data/io.github.themew2.EntraRDP.desktop" \
     "$HOME/.local/share/applications/io.github.themew2.EntraRDP.desktop"
 install -Dm644 "$HERE/data/io.github.themew2.EntraRDP.metainfo.xml" \
     "$HOME/.local/share/metainfo/io.github.themew2.EntraRDP.metainfo.xml"
+install -Dm644 "$HERE/data/icons/io.github.themew2.EntraRDP.svg" \
+    "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.themew2.EntraRDP.svg"
+
 # Both formats are installed. SVG is preferred where it works, but some icon
 # renderers reject SVGs that Qt accepts, and a rejected icon silently falls
 # back to a generic placeholder. PNGs at the standard sizes cannot fail that
 # way, and the icon spec prefers an exact-size raster match anyway.
-install -Dm644 "$HERE/data/icons/io.github.themew2.EntraRDP.svg" \
-    "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.themew2.EntraRDP.svg"
 for size in 16 22 24 32 48 64 128 256; do
     src="$HERE/data/icons/png/$size.png"
     [[ -f "$src" ]] || continue
@@ -159,15 +191,17 @@ THEME
     fi
     info "Created $HICOLOR/index.theme (icon lookups skip directories without one)"
 fi
+
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+
 # Icon lookups consult icon-theme.cache in preference to scanning the
 # directory. A cache written before this icon was installed records its
 # absence and keeps returning that, so a correctly placed file still resolves
 # to a generic placeholder. Removing the cache before regenerating is more
 # reliable than -f alone, particularly in ~/.local/share/icons/hicolor, which
 # other software (Steam, for one) also writes to.
-rm -f "$HOME/.local/share/icons/hicolor/icon-theme.cache"
-gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+rm -f "$HICOLOR/icon-theme.cache"
+gtk-update-icon-cache -f -t "$HICOLOR" 2>/dev/null || true
 kbuildsycoca6 --noincremental 2>/dev/null || kbuildsycoca5 --noincremental 2>/dev/null || true
 
 if [[ ! -x "$HOME/.local/bin/entrardp" ]]; then
