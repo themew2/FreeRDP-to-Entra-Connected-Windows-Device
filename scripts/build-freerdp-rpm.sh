@@ -235,7 +235,10 @@ if [[ "$AUTO_INSTALL" == "1" ]]; then
     else
         warn "No SDL client found under /opt/freerdp-nightly/bin."
         warn "Contents:"
-        ls -1 /opt/freerdp-nightly/bin 2>/dev/null | sed 's/^/    /' || true
+        # find rather than ls: ls output is not safe to parse, and shellcheck
+        # flags it (SC2012). -printf keeps this to basenames.
+        find /opt/freerdp-nightly/bin -maxdepth 1 -type f -printf '    %f\n' \
+            2>/dev/null | sort || true
     fi
 else
     info "AUTO_INSTALL=0; install manually with: sudo dnf install ${RPMS[*]}"
