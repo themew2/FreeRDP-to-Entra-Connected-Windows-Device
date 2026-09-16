@@ -30,16 +30,18 @@ BIN_NAMES = ["sdl-freerdp3", "sdl-freerdp", "sdl3-freerdp"]
 # guidance is to run `cmake --build <dir> --target install` and use the result;
 # build-tree binaries pick up wrong library paths and resource locations.
 PREFERRED_PATHS = [
-    # Packaged builds first. These are tracked by the system package manager,
-    # so they receive rebuilds and removals as a unit and their version is
-    # visible through rpm/dpkg. A loose build under ~/.local is invisible to
-    # all of that and tends to drift, so it ranks below them even though it is
-    # equally functional.
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
+    # The prefix produced by scripts/build-freerdp.sh, built from a release
+    # tag. This ranks first because it is the build this project targets and
+    # the one its own tooling produces.
+    Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
     Path("/usr/local/bin/sdl-freerdp"),
-    Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
+    # FreeRDP's nightly RPM. Built from master with upstream's nightly
+    # defaults (WITH_VERBOSE_WINPR_ASSERT=ON, experimental VAAPI encoding),
+    # and its spec hardcodes version 3.0-0 so rpm cannot distinguish rebuilds.
+    # Functional, but ranks last: it is a moving target, not a release.
+    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
+    Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
 ]
 
 # Webview support landed upstream in this release; older builds cannot have it
