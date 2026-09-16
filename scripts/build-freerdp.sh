@@ -294,7 +294,11 @@ resolve_sso_mib() {
 # Reads $build from the calling scope.
 require_cache_on() {
     local var=$1 hint=$2
-    grep -qx "${var}:BOOL=ON" "$build/CMakeCache.txt" \
+    # The type is not always BOOL: a variable passed with -D but never
+    # declared via option() in the top-level CMakeLists is cached as
+    # UNINITIALIZED. WITH_WEBVIEW is declared only under
+    # client/SDL/common/aad, so it lands that way while still taking effect.
+    grep -qxE "${var}:[A-Z]+=(ON|1|TRUE|YES)" "$build/CMakeCache.txt" \
         || die "$var did not initialise. $hint"
 }
 
