@@ -36,10 +36,13 @@ PREFERRED_PATHS = [
     Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
     Path("/usr/local/bin/sdl-freerdp"),
-    # FreeRDP's nightly RPM. Built from master with upstream's nightly
-    # defaults (WITH_VERBOSE_WINPR_ASSERT=ON, experimental VAAPI encoding),
-    # and its spec hardcodes version 3.0-0 so rpm cannot distinguish rebuilds.
-    # Functional, but ranks last: it is a moving target, not a release.
+    # The prefix used by scripts/build-freerdp-rpm.sh. Same release tag as
+    # above, but packaged with upstream's nightly spec, whose defaults
+    # (Debug, AddressSanitizer, WITH_VERBOSE_WINPR_ASSERT, experimental VAAPI
+    # encoding) are meant for nightly testing. A build carrying them produced
+    # audibly degraded microphone capture in Teams calls. The spec also
+    # hardcodes version 3.0-0, so rpm cannot tell one rebuild from another and
+    # a stale binary can persist unnoticed. Ranks last for those reasons.
     Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
     Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
 ]

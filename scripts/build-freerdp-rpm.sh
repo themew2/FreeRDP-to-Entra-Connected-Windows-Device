@@ -11,17 +11,29 @@
 #   - the BuildRequires list is maintained upstream, not guessed at here
 #   - installs to /opt/freerdp-nightly, coexisting with the distro package
 #
-# Note the upstream nightly spec builds with clang, CMAKE_BUILD_TYPE=Debug,
-# -O1 and AddressSanitizer, and runs the test suite. That is deliberate for a
-# nightly test package but costs runtime performance. Set RELEASE_BUILD=1 to
-# also switch it to a Release build without sanitizers.
+# The source is always a tagged release, the same as scripts/build-freerdp.sh.
+# Only the packaging recipe comes from upstream's "nightly" spec; the name
+# refers to how upstream publishes test packages, not to the branch built.
+#
+# That spec is tuned for nightly testing rather than daily use: clang,
+# CMAKE_BUILD_TYPE=Debug, -O1, AddressSanitizer, WITH_VERBOSE_WINPR_ASSERT and
+# experimental VAAPI H264 encoding, plus the test suite. Those defaults cost
+# real runtime performance, and a build carrying them produced audibly
+# degraded microphone capture in Teams calls over AUDIN where a plain Release
+# build of the same release tag did not.
+#
+# So this script turns them off by default. Set RELEASE_BUILD=0 to build the
+# spec as upstream ships it, which is only useful when reporting a bug to the
+# FreeRDP project.
 
 set -euo pipefail
 
 SRC="${ENTRARDP_RPM_SRC:-$HOME/.cache/entrardp/FreeRDP-rpm}"
 # Set by resolve_version(): the newest release tag, or FREERDP_BRANCH if set.
 BRANCH=""
-RELEASE_BUILD="${RELEASE_BUILD:-0}"
+# Defaults on: debug instrumentation is for diagnosing FreeRDP itself, not
+# for a client someone takes calls on.
+RELEASE_BUILD="${RELEASE_BUILD:-1}"
 AUTO_INSTALL="${AUTO_INSTALL:-1}"
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -119,18 +131,46 @@ else
 fi
 
 if [[ "$RELEASE_BUILD" == "1" ]]; then
-    info "Switching to a Release build without sanitizers"
+    info "Switching to a Release build without debug instrumentation"
     sed -i -E 's/^([[:space:]]*)-DCMAKE_BUILD_TYPE=Debug/\1-DCMAKE_BUILD_TYPE=Release/' "$SPEC"
     sed -i -E 's/^([[:space:]]*)-DWITH_SANITIZE_ADDRESS=ON/\1-DWITH_SANITIZE_ADDRESS=OFF/' "$SPEC"
     sed -i -E 's/^([[:space:]]*)-DCMAKE_C_FLAGS="-O1"/\1-DCMAKE_C_FLAGS="-O2"/' "$SPEC"
     sed -i -E 's/^([[:space:]]*)-DCMAKE_CXX_FLAGS="-O1"/\1-DCMAKE_CXX_FLAGS="-O2"/' "$SPEC"
+
+    # These two are FreeRDP cmake defaults rather than spec settings, so they
+    # survive the build type change and have to be turned off explicitly.
+    # The client announces both on every connection:
+    #
+    #   This build is using [experimental] build options:
+    #   * 'WITH_VAAPI_H264_ENCODING=ON'
+    #   [experimental] build options might crash the application
+    #
+    #   This build is using [runtime-check] build options:
+    #   * 'WITH_VERBOSE_WINPR_ASSERT=ON'
+    #   [runtime-check] build options might slow down the application
+    #
+    # Verbose asserts run on hot paths including audio capture, where missing
+    # a deadline is audible. VAAPI H264 encoding is encode-only and unused by
+    # a client, so turning it off costs nothing.
+    #
+    # Inserted after the webview line rather than matched in place: neither
+    # appears in the spec, because both are cmake defaults.
+    if grep -qE '^[[:space:]]*-DWITH_VERBOSE_WINPR_ASSERT' "$SPEC"; then
+        info "Spec already sets WITH_VERBOSE_WINPR_ASSERT"
+    else
+        sed -i '/-DWITH_WEBVIEW=ON/a\    -DWITH_VERBOSE_WINPR_ASSERT=OFF \\\n    -DWITH_VAAPI_H264_ENCODING=OFF \\' "$SPEC"
+    fi
+else
+    warn "RELEASE_BUILD=0: building upstream's nightly test configuration."
+    warn "Expect reduced performance and degraded audio. Use this only when"
+    warn "reproducing a bug for the FreeRDP project."
 fi
 
 info "Resulting build flags:"
 # `|| true` because this only reports state. grep exits 1 when it matches
 # nothing, and under `set -euo pipefail` that would abort the build from a
 # line whose only job is to print a summary.
-grep -E '^[[:space:]]*-D(WITH_WEBVIEW|CMAKE_BUILD_TYPE|WITH_SANITIZE_ADDRESS)' "$SPEC" || true
+grep -E '^[[:space:]]*-D(WITH_WEBVIEW|CMAKE_BUILD_TYPE|WITH_SANITIZE_ADDRESS|WITH_VERBOSE_WINPR_ASSERT|WITH_VAAPI_H264_ENCODING)' "$SPEC" || true
 
 # ---------------------------------------------------------------- build rpm
 
