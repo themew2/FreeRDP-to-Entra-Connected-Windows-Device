@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -55,6 +56,11 @@ PREFERRED_PATHS = [
 # Webview support landed upstream in this release; older builds cannot have it
 # regardless of how they were configured.
 WEBVIEW_MIN_VERSION = (3, 16, 0)
+
+# An AVD workspace file embeds a certificate that expires a few months
+# after it is downloaded. There is no public API to refresh one, so the
+# only remedy is a manual re-download from the AVD web client.
+WORKSPACE_STALE_DAYS = 90
 
 
 class Webview(Enum):
@@ -187,6 +193,11 @@ class Connection:
     height: int = 1440
     force_x11: bool = True
     extra: str = ""
+    # Path to an Azure Virtual Desktop workspace file (.rdpw). FreeRDP 3
+    # parses these natively, so no parsing happens here. The file carries
+    # the host, the gateway and a load balancing token, which is why /v:
+    # is omitted whenever one is set.
+    workspace_file: str = ""
 
     def command(self) -> list[str]:
         binary = clean_value(self.binary) or "sdl-freerdp"
@@ -197,9 +208,20 @@ class Connection:
             args += ["env", "SDL_VIDEODRIVER=x11"]
         args.append(binary)
 
-        host = clean_value(self.host)
-        if host:
-            args.append(f"/v:{host}")
+        # An AVD workspace file supplies the target itself, so it replaces
+        # /v: rather than supplementing it. Passing both is ambiguous and
+        # FreeRDP does not define which wins.
+        workspace = clean_value(self.workspace_file)
+        if workspace:
+            # Positional, as FreeRDP expects for .rdp and .rdpw input.
+            args.append(workspace)
+            # AVD routes through the ARM gateway. Without this the client
+            # attempts a direct connection to the session host and fails.
+            args.append("/gateway:type:arm")
+        else:
+            host = clean_value(self.host)
+            if host:
+                args.append(f"/v:{host}")
 
         # /sec:aad is mandatory alongside /azure. Without it the client falls
         # back to NLA/Kerberos and dies with "Cannot find KDC for realm".
@@ -235,7 +257,28 @@ class Connection:
         issues = []
         if not is_usable(clean_value(self.binary)):
             issues.append("FreeRDP binary not found or not executable.")
-        if not clean_value(self.host):
+        workspace = clean_value(self.workspace_file)
+        if workspace:
+            wf = Path(workspace).expanduser()
+            if not wf.is_file():
+                issues.append(f"Workspace file not found: {workspace}")
+            else:
+                # The certificate inside an .rdpw expires a few months
+                # after download; connecting past that fails with 0x1608.
+                # mtime is a proxy for download time, not the real expiry,
+                # so this warns rather than blocks.
+                age = (time.time() - wf.stat().st_mtime) / 86400
+                if age > WORKSPACE_STALE_DAYS:
+                    issues.append(
+                        f"Workspace file is {int(age)} days old. These expire; "
+                        "re-download it from the AVD web client if sign-in fails."
+                    )
+            if clean_value(self.host):
+                issues.append(
+                    "Both a host name and a workspace file are set; "
+                    "the workspace file takes precedence."
+                )
+        elif not clean_value(self.host):
             issues.append("No host name set.")
         elif check_dns and not resolves(clean_value(self.host)):
             issues.append(
