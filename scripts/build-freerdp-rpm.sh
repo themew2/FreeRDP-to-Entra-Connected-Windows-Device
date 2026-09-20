@@ -137,9 +137,10 @@ if [[ "$RELEASE_BUILD" == "1" ]]; then
     sed -i -E 's/^([[:space:]]*)-DCMAKE_C_FLAGS="-O1"/\1-DCMAKE_C_FLAGS="-O2"/' "$SPEC"
     sed -i -E 's/^([[:space:]]*)-DCMAKE_CXX_FLAGS="-O1"/\1-DCMAKE_CXX_FLAGS="-O2"/' "$SPEC"
 
-    # These two are FreeRDP cmake defaults rather than spec settings, so they
-    # survive the build type change and have to be turned off explicitly.
-    # The client announces both on every connection:
+    # WITH_VERBOSE_WINPR_ASSERT and WITH_VAAPI_H264_ENCODING are FreeRDP cmake
+    # defaults rather than spec settings, so they survive the build type
+    # change and have to be turned off explicitly. The client announces both
+    # on every connection:
     #
     #   This build is using [experimental] build options:
     #   * 'WITH_VAAPI_H264_ENCODING=ON'
@@ -151,14 +152,23 @@ if [[ "$RELEASE_BUILD" == "1" ]]; then
     #
     # Verbose asserts run on hot paths including audio capture, where missing
     # a deadline is audible. VAAPI H264 encoding is encode-only and unused by
-    # a client, so turning it off costs nothing.
+    # a client, so disabling it costs nothing.
     #
-    # Inserted after the webview line rather than matched in place: neither
-    # appears in the spec, because both are cmake defaults.
+    # Neither appears in the spec, so there is nothing to match in place. The
+    # webview line is rewritten into three lines instead, reusing its own
+    # trailing continuation through the second capture group. That keeps a
+    # literal backslash out of this script, which avoids shellcheck SC1003 and
+    # sidesteps sed eating a trailing backslash in an append block.
     if grep -qE '^[[:space:]]*-DWITH_VERBOSE_WINPR_ASSERT' "$SPEC"; then
         info "Spec already sets WITH_VERBOSE_WINPR_ASSERT"
+    elif grep -qE '^[[:space:]]*-DWITH_WEBVIEW=ON[[:space:]]+.$' "$SPEC"; then
+        sed -i -E 's|^([[:space:]]*)-DWITH_WEBVIEW=ON(.*)$|\1-DWITH_WEBVIEW=ON\2\n\1-DWITH_VERBOSE_WINPR_ASSERT=OFF\2\n\1-DWITH_VAAPI_H264_ENCODING=OFF\2|' "$SPEC"
     else
-        sed -i '/-DWITH_WEBVIEW=ON/a\    -DWITH_VERBOSE_WINPR_ASSERT=OFF \\\n    -DWITH_VAAPI_H264_ENCODING=OFF \\' "$SPEC"
+        # Only reachable if upstream moves webview to the end of the argument
+        # list. Appending there would orphan the new lines outside the cmake
+        # invocation, so leave the spec alone and say so.
+        warn "WITH_WEBVIEW line carries no continuation; leaving debug flags at"
+        warn "their upstream defaults. Set them by hand in $SPEC if needed."
     fi
 else
     warn "RELEASE_BUILD=0: building upstream's nightly test configuration."
