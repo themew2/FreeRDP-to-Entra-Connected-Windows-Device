@@ -32,7 +32,7 @@ Both builds are named `sdl-freerdp`. **Name equality is not build equality** —
 
 | Platform | Status |
 |---|---|
-| **Fedora 44** | Tested end to end via the RPM path |
+| **Fedora 44** | Tested end to end via both paths |
 | Other Fedora / RHEL / openSUSE | Should work; builds from upstream's own spec |
 | Debian / Ubuntu / Arch | **Untested.** Falls back to the source build, whose dependency lists have only been exercised on Fedora |
 | Anything else | No automatic FreeRDP build. Supply your own binary and use `SKIP_FREERDP=1` |
@@ -51,9 +51,11 @@ cd FreeRDP-to-Entra-Connected-Windows-Device
 
 One command. It builds a webview-enabled FreeRDP, installs the GUI, and registers the desktop entry. Budget 20–40 minutes, almost all of it compiling. Only the dependency step needs `sudo`.
 
-**On RPM systems** it builds through FreeRDP's own packaging, producing a package `dnf` tracks, installed to `/opt/freerdp-nightly`. This is the tested path and the one the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+**On RPM systems** it builds through FreeRDP's own packaging, producing a package `dnf` tracks, installed to `/opt/freerdp-nightly`. This is the route the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
 
-**Elsewhere** it falls back to compiling into a private prefix under `~/.local/share/entrardp`. That path works but its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
+**Elsewhere** it compiles into a private prefix under `~/.local/share/entrardp`. Its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
+
+Both routes build the **same tagged release** of FreeRDP. They differ in packaging, not in version.
 
 **Already have a webview-enabled FreeRDP?** Skip the compile:
 
@@ -63,11 +65,7 @@ SKIP_FREERDP=1 ./scripts/install.sh
 
 Then select your binary in the app's *FreeRDP binary* field. It will tell you whether that build supports webview.
 
-For a faster binary on the RPM path (upstream's nightly spec defaults to a debug build with AddressSanitizer):
-
-```bash
-RELEASE_BUILD=1 ./scripts/install.sh
-```
+Both routes produce a release build by default. To reproduce upstream's nightly test configuration instead — debug, AddressSanitizer, verbose assertions — set `RELEASE_BUILD=0`. That is only useful when filing a bug against FreeRDP itself, and it noticeably degrades performance.
 
 ## What the scripts do
 
@@ -82,26 +80,30 @@ install.sh
   └─ desktop entry, icons, AppStream metainfo
 ```
 
-### `scripts/build-freerdp-rpm.sh` — preferred
+### `scripts/build-freerdp-rpm.sh` — RPM systems
 
-Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec` and `packaging/scripts/create_rpm.sh`, patching the spec to set `WITH_WEBVIEW=ON`. The spec already declares the WebKitGTK build dependency, so that is the only change needed.
+Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec` and `packaging/scripts/create_rpm.sh`, patching the spec to set `WITH_WEBVIEW=ON`. The spec already declares the WebKitGTK build dependency.
 
-Better than the source route wherever it works:
+What it gains you over the source route:
 
 - `dnf` owns the result, so `dnf remove freerdp-nightly` uninstalls cleanly
 - build dependencies come from the spec via `dnf builddep`, not a list maintained here
 - installs to `/opt/freerdp-nightly`, coexisting with your distribution's FreeRDP
 - the binary is named `sdl-freerdp3`, since the nightly spec sets `WITH_CLIENT_SDL_VERSIONED=ON`
 
+**The "nightly" in the file name refers to how upstream publishes test packages, not to the branch built.** The source is the same tagged release the other script uses. What differs is the spec's build configuration, which is tuned for nightly testing: debug build, AddressSanitizer, `WITH_VERBOSE_WINPR_ASSERT`, experimental VAAPI H264 encoding. This script turns all of that off by default, because a build carrying it produced audibly degraded microphone capture in Teams calls where a plain release build of the same tag did not.
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `RELEASE_BUILD=1` | off | Release build without AddressSanitizer, instead of upstream's debug configuration |
+| `RELEASE_BUILD=0` | on | Build upstream's nightly test configuration instead. Slower, and known to degrade audio. Use only when reporting a bug to FreeRDP |
 | `AUTO_INSTALL=0` | on | Build the RPM but do not install it |
 | `FREERDP_BRANCH` | newest release tag | Branch or tag to build. Must be ≥ 3.16.0 for webview support |
 
-### `scripts/build-freerdp.sh` — fallback
+### `scripts/build-freerdp.sh` — everywhere else
 
-Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without RPM tooling.
+Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without RPM tooling, and usable anywhere if you would rather not involve the package manager.
+
+The app prefers a binary from this prefix when both are installed, since it is built with plain release defaults and nothing else.
 
 | Phase | What happens |
 |---|---|
@@ -256,6 +258,21 @@ Your FreeRDP binary lacks webview support. The *FreeRDP binary* section will say
 **Command line parsing failed at 'azure'.**
 A quote character got pasted into a field. The app strips these automatically now; if you see it, check *Extra flags*.
 
+**Scratchy or distorted microphone audio in Teams, but fine locally.**
+Check what your binary was built with:
+
+```bash
+<path-to-binary> /buildconfig | tr ' ' '\n' | grep -iE 'VERBOSE_WINPR|VAAPI_H264'
+```
+
+`WITH_VERBOSE_WINPR_ASSERT=ON` means debug instrumentation is active. FreeRDP itself warns on every connection that it "might slow down the application", and the audio capture path has deadlines tight enough for that to be audible. Rebuild with the current scripts, which disable it by default. An older copy of `build-freerdp-rpm.sh` left it on.
+
+Note that rebuilding alone may not be enough: the spec hardcodes version `3.0-0`, so `dnf` sees an identical package name and version and skips the install, silently leaving the old binary in place. Verify with `rpm -q --qf '%{BUILDTIME:date}\n' freerdp-nightly`, and force it if needed:
+
+```bash
+sudo rpm -Uvh --force ~/rpmbuild/RPMS/x86_64/freerdp-nightly-*.rpm
+```
+
 **Horizontal line artifacts on Wayland.**
 Smart sizing combined with fullscreen is a FreeRDP SDL3 rendering bug, tracked upstream as [FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204). The app warns when both are enabled — use a fixed resolution with fullscreen instead.
 
@@ -278,8 +295,9 @@ scripts/
     install.sh            Entry point: builds FreeRDP, installs the GUI,
                           registers the desktop entry
     build-freerdp-rpm.sh  Builds an RPM via upstream's own packaging
-                          (preferred, used automatically on RPM systems)
-    build-freerdp.sh      Compiles to a private prefix; fallback elsewhere
+                          (used automatically on RPM systems)
+    build-freerdp.sh      Compiles to a private prefix; used elsewhere,
+                          and preferred by the app when both are present
     diagnose-icon.sh      Reports why the application icon may not appear
 data/                  Desktop entry, AppStream metainfo, icon
 ```
@@ -301,8 +319,8 @@ Your distribution's package receives security updates through `dnf update`. A bi
 The build scripts therefore resolve the **newest release tag** at build time rather than defaulting to a branch. FreeRDP tags releases directly, so this always produces a real release without hardcoding a version that goes stale:
 
 ```bash
-RELEASE_BUILD=1 ./scripts/build-freerdp-rpm.sh   # RPM systems
-./scripts/build-freerdp.sh                       # everywhere else
+./scripts/build-freerdp-rpm.sh   # RPM systems
+./scripts/build-freerdp.sh       # everywhere else
 ```
 
 To pin a specific version, or to test unreleased changes:
