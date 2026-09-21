@@ -8,11 +8,11 @@
 # with WITH_WEBVIEW=ON.
 
 set -euo pipefail
+# The repository root, not the script directory: pip installs from it and the
+# build scripts are addressed relative to it.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
+# shellcheck source=scripts/freerdp-common.sh
+source "$HERE/scripts/freerdp-common.sh"   # info/warn/die
 
 # ----------------------------------------------------------------- python
 
@@ -48,19 +48,27 @@ ensure_python_deps() {
 }
 
 pip_install() {
+    # mktemp rather than a fixed /tmp/entrardp-pip.log: a predictable name in a
+    # shared directory is one another user can pre-create as a symlink, and on
+    # a multi-user machine the fixed path also collides between users.
+    local log rc=0
+    log="$(mktemp -t entrardp-pip.XXXXXX)"
+
     # Many distributions mark the system Python as externally managed (PEP 668),
     # which blocks pip even for --user installs. Retry with the override, which
     # only ever touches ~/.local, never system packages.
-    if python3 -m pip install --user --upgrade "$HERE" 2>/tmp/entrardp-pip.log; then
+    if python3 -m pip install --user --upgrade "$HERE" 2>"$log"; then
+        rm -f "$log"
         return 0
     fi
-    if grep -q "externally-managed-environment" /tmp/entrardp-pip.log; then
-        warn "System Python is externally managed; installing into ~/.local anyway."
-        python3 -m pip install --user --upgrade --break-system-packages "$HERE"
-    else
-        cat /tmp/entrardp-pip.log >&2
-        die "Installation failed. See the output above."
-    fi
+    grep -q "externally-managed-environment" "$log" || rc=1
+    # Removed before either branch below, because die exits and would leak it.
+    [[ $rc -eq 0 ]] || cat "$log" >&2
+    rm -f "$log"
+
+    [[ $rc -eq 0 ]] || die "Installation failed. See the output above."
+    warn "System Python is externally managed; installing into ~/.local anyway."
+    python3 -m pip install --user --upgrade --break-system-packages "$HERE"
 }
 
 # ---------------------------------------------------------------- freerdp

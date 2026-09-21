@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
@@ -64,6 +65,48 @@ class DnsProbe(QRunnable):
         self.signals.finished.emit(self.host, ok)
 
 
+class WebviewProbeSignals(QObject):
+    # Webview is an Enum, so the payload is typed as a plain object.
+    finished = pyqtSignal(str, object)
+
+
+class WebviewProbe(QRunnable):
+    """Inspect one binary's build flags off the UI thread.
+
+    detect_webview shells out to /buildconfig, ldd and nm. `nm` over a FreeRDP
+    binary is slow enough to stall the interface visibly, and this used to run
+    inline on every keystroke in the binary field.
+    """
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+        self.signals = WebviewProbeSignals()
+
+    def run(self):
+        self.signals.finished.emit(self.path, detect_webview(self.path))
+
+
+class BinarySearchSignals(QObject):
+    finished = pyqtSignal(str)
+
+
+class BinarySearch(QRunnable):
+    """Locate a FreeRDP binary off the UI thread.
+
+    find_binary calls detect_webview once per candidate, so it carries the
+    cost described above several times over — far too slow to run while the
+    window is being constructed.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.signals = BinarySearchSignals()
+
+    def run(self):
+        self.signals.finished.emit(find_binary() or "")
+
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -73,17 +116,31 @@ class MainWindow(QWidget):
         self.toggle_widgets: dict[str, QCheckBox] = {}
         self._pool = QThreadPool()
         self._dns_ok: dict[str, bool] = {}
+        self._webview: dict[str, Webview] = {}
+        self._search_pending = False
         # Wait for a pause in typing before probing, so an intermediate value
         # like "m" on the way to "my-host" never triggers a lookup.
         self._dns_timer = QTimer(self)
         self._dns_timer.setSingleShot(True)
         self._dns_timer.setInterval(900)
         self._dns_timer.timeout.connect(self._start_dns_probe)
+        # Same debounce for the binary field, for the same reason.
+        self._bin_timer = QTimer(self)
+        self._bin_timer.setSingleShot(True)
+        self._bin_timer.setInterval(400)
+        self._bin_timer.timeout.connect(self._start_webview_probe)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._drain)
         self._build_ui()
         self._reload_profiles()
-        self.bin_in.setText(find_binary() or "")
         self._on_binary_changed()
+        # Restore first, then detect: a profile's own path is a cheap stat,
+        # while detection shells out to every candidate. Detection only runs
+        # if the restore left the field empty.
         self._restore_last_profile()
+        if not clean_value(self.bin_in.text()):
+            self._autodetect_binary()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -236,6 +293,30 @@ class MainWindow(QWidget):
             extra=self.extra_in.text(),
         )
 
+    def _drain(self):
+        """Stop scheduling probes and let any in flight finish.
+
+        Without this, shutting down mid-probe aborts the process: the pool
+        thread is still inside run() when Python tears down the QObject
+        carrying that runnable's signals, and the emit raises "wrapped C/C++
+        object has been deleted". Closing the window during a slow DNS lookup
+        reproduces it about half the time.
+
+        Hooked to QApplication.aboutToQuit rather than closeEvent alone,
+        because shutdown does not always go through the window: quitting the
+        application directly leaves the event loop without ever closing it.
+
+        The bound is generous enough for a DNS lookup or a /buildconfig
+        probe; exceeding it only returns to the previous behaviour.
+        """
+        self._dns_timer.stop()
+        self._bin_timer.stop()
+        self._pool.waitForDone(5000)
+
+    def closeEvent(self, event):
+        self._drain()
+        super().closeEvent(event)
+
     def _set_status(self, text: str, kind: str = "muted"):
         self.status.setText(text)
         self.status.setStyleSheet(STATUS_COLORS.get(kind, ""))
@@ -245,10 +326,30 @@ class MainWindow(QWidget):
         for a, b in MUTUALLY_EXCLUSIVE:
             wa, wb = self.toggle_widgets[a], self.toggle_widgets[b]
             if sender is wa and wa.isChecked() and wb.isChecked():
-                wb.blockSignals(True); wb.setChecked(False); wb.blockSignals(False)
+                self._uncheck(wb)
             elif sender is wb and wb.isChecked() and wa.isChecked():
-                wa.blockSignals(True); wa.setChecked(False); wa.blockSignals(False)
+                self._uncheck(wa)
         self._refresh()
+
+    @staticmethod
+    def _uncheck(widget: QCheckBox):
+        widget.blockSignals(True)
+        widget.setChecked(False)
+        widget.blockSignals(False)
+
+    def _enforce_exclusive(self):
+        """Clear any mutually exclusive pair that is set on both sides.
+
+        _on_toggle only fires for interactive changes, so loading a profile
+        bypasses it entirely. A profile saved before a pair was added to
+        MUTUALLY_EXCLUSIVE can hold a combination FreeRDP refuses. The second
+        of the pair is the one dropped, so the outcome does not depend on
+        dictionary order.
+        """
+        for a, b in MUTUALLY_EXCLUSIVE:
+            wa, wb = self.toggle_widgets[a], self.toggle_widgets[b]
+            if wa.isChecked() and wb.isChecked():
+                self._uncheck(wb)
 
     def _refresh(self):
         conn = self._connection()
@@ -307,22 +408,67 @@ class MainWindow(QWidget):
         if not path:
             self._set_label("No binary selected. Run the installer, or browse to one.", "error")
         elif not is_usable(path):
+            # Only a stat, so this stays on the UI thread.
             self._set_label("Not found, or not executable.", "error")
+        elif path in self._webview:
+            self._show_webview(self._webview[path])
         else:
-            state = detect_webview(path)
-            if state is Webview.YES:
-                self._set_label("WebView support detected — sign-in opens an embedded browser.", "ok")
-            elif state is Webview.NO:
-                self._set_label(
-                    "WITH_WEBVIEW=OFF in this build. Sign-in will fall back to printing a "
-                    "URL for manual copy/paste. Distribution packages commonly ship this "
-                    "way; run scripts/build-freerdp.sh, or select a build made with "
-                    "WITH_WEBVIEW=ON (FreeRDP 3.16.0 or newer).",
-                    "warn",
-                )
-            else:
-                self._set_label("Could not determine WebView support.", "muted")
+            self._set_label("Checking build flags...", "muted")
+            self._bin_timer.start()
         self._refresh()
+
+    def _start_webview_probe(self):
+        path = clean_value(self.bin_in.text())
+        if not path or not is_usable(path) or path in self._webview:
+            return
+        probe = WebviewProbe(path)
+        probe.signals.finished.connect(self._webview_result)
+        self._pool.start(probe)
+
+    def _webview_result(self, path: str, state: Webview):
+        self._webview[path] = state
+        # Only report if the field still holds the path that was probed.
+        if clean_value(self.bin_in.text()) == path:
+            self._show_webview(state)
+
+    def _show_webview(self, state: Webview):
+        if state is Webview.YES:
+            self._set_label("WebView support detected — sign-in opens an embedded browser.", "ok")
+        elif state is Webview.NO:
+            self._set_label(
+                "WITH_WEBVIEW=OFF in this build. Sign-in will fall back to printing a "
+                "URL for manual copy/paste. Distribution packages commonly ship this "
+                "way; run scripts/build-freerdp.sh, or select a build made with "
+                "WITH_WEBVIEW=ON (FreeRDP 3.16.0 or newer).",
+                "warn",
+            )
+        else:
+            self._set_label("Could not determine WebView support.", "muted")
+
+    def _autodetect_binary(self, note: str = ""):
+        """Fill the binary field from a background search.
+
+        `note`, if given, is shown when the search succeeds and may contain a
+        {path} placeholder.
+        """
+        if self._search_pending:
+            return
+        self._search_pending = True
+        search = BinarySearch()
+        search.signals.finished.connect(
+            lambda path: self._detected_binary(path, note)
+        )
+        self._pool.start(search)
+
+    def _detected_binary(self, path: str, note: str):
+        self._search_pending = False
+        # The search takes seconds, in which the user may have browsed to a
+        # binary or loaded another profile. Never overwrite that.
+        if not path or clean_value(self.bin_in.text()):
+            return
+        self.bin_in.setText(path)
+        if note:
+            self._set_status(note.format(path=path), "warn")
 
     def _set_label(self, text: str, kind: str):
         self.webview_label.setText(text)
@@ -335,25 +481,43 @@ class MainWindow(QWidget):
 
     def _connect(self):
         args = self._connection().command()
+        # Output goes to an unlinked temporary file, not a pipe.
+        #
+        # _check below reads it once, 2.5s in, and then nobody reads it again.
+        # With a pipe, FreeRDP's own logging fills the 64 KB buffer during a
+        # normal session and the client blocks mid-write — the session freezes
+        # with no indication why. A file never applies back-pressure, and it
+        # still captures the output needed to explain an immediate exit.
+        # Not a context manager: the handle has to outlive this scope, because
+        # the child writes to it and _check reads it back 2.5s from now.
+        log = tempfile.TemporaryFile(mode="w+", prefix="entrardp-", suffix=".log")  # noqa: SIM115
         try:
             proc = subprocess.Popen(
                 args, start_new_session=True,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                stdout=log, stderr=subprocess.STDOUT,
             )
         except OSError as exc:
+            log.close()
             QMessageBox.critical(self, "Launch failed", f"Could not start {args[0]}\n\n{exc}")
             return
         self._set_status("Starting session...", "muted")
-        QTimer.singleShot(2500, lambda: self._check(proc))
+        QTimer.singleShot(2500, lambda: self._check(proc, log))
 
-    def _check(self, proc):
+    def _check(self, proc, log):
         if proc.poll() is None:
             self._set_status(f"Session running (pid {proc.pid})", "ok")
+            # The child holds its own descriptor, so closing ours does not
+            # disturb it. The file is already unlinked and disappears when the
+            # session exits.
+            log.close()
             return
         try:
-            output = proc.communicate(timeout=2)[0] or ""
-        except subprocess.TimeoutExpired:
+            log.seek(0)
+            output = log.read()
+        except OSError:
             output = ""
+        finally:
+            log.close()
         self._set_status(f"Exited immediately (code {proc.returncode})", "error")
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
@@ -400,18 +564,18 @@ class MainWindow(QWidget):
         if stored and is_usable(stored):
             self.bin_in.setText(stored)
         else:
-            detected = find_binary()
-            if detected:
-                self.bin_in.setText(detected)
-                if stored:
-                    self._set_status(
-                        f"'{name}' pointed at a binary that is gone; using {detected}",
-                        "warn",
-                    )
+            # Detection probes every candidate binary, so it runs in the
+            # background and fills the field when it completes.
+            self.bin_in.clear()
+            self._autodetect_binary(
+                f"'{name}' pointed at a binary that is gone; using {{path}}"
+                if stored else ""
+            )
         for key, widget in self.toggle_widgets.items():
             widget.blockSignals(True)
             widget.setChecked(data.get("toggles", {}).get(key, widget.isChecked()))
             widget.blockSignals(False)
+        self._enforce_exclusive()
         self.res_group.setChecked(data.get("manual_res", True))
         self.width_in.setValue(data.get("width", 2560))
         self.height_in.setValue(data.get("height", 1440))
@@ -457,8 +621,12 @@ class MainWindow(QWidget):
         if QMessageBox.question(self, "Delete profile", f"Delete '{name}'?") != \
                 QMessageBox.StandardButton.Yes:
             return
+        # Checked before the delete: the last_used getter filters out names no
+        # longer in the store, so afterwards it always reports None and the
+        # state file would never actually be cleared.
+        was_last = self.store.last_used == name
         self.store.delete(name)
-        if self.store.last_used == name:
+        if was_last:
             self.store.last_used = None
         self.profile_box.setCurrentText("")
         self._reload_profiles()

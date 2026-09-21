@@ -30,19 +30,24 @@ BIN_NAMES = ["sdl-freerdp3", "sdl-freerdp", "sdl3-freerdp"]
 # guidance is to run `cmake --build <dir> --target install` and use the result;
 # build-tree binaries pick up wrong library paths and resource locations.
 PREFERRED_PATHS = [
-    # The prefix produced by scripts/build-freerdp.sh, built from a release
-    # tag. This ranks first because it is the build this project targets and
-    # the one its own tooling produces.
+    # The prefix produced by scripts/build-freerdp.sh, built from the newest
+    # release tag. This ranks first because it is the build this project
+    # targets and the one its own tooling produces.
     Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
     Path("/usr/local/bin/sdl-freerdp"),
-    # The prefix used by scripts/build-freerdp-rpm.sh. Same release tag as
-    # above, but packaged with upstream's nightly spec, whose defaults
-    # (Debug, AddressSanitizer, WITH_VERBOSE_WINPR_ASSERT, experimental VAAPI
-    # encoding) are meant for nightly testing. A build carrying them produced
-    # audibly degraded microphone capture in Teams calls. The spec also
+    # The prefix used by scripts/build-freerdp-rpm.sh, from the same release
+    # tag but packaged with upstream's nightly spec. That script overrides the
+    # spec's nightly-testing defaults (Debug, AddressSanitizer,
+    # WITH_VERBOSE_WINPR_ASSERT, experimental VAAPI encoding) unless
+    # RELEASE_BUILD=0, so the audio regression those once caused no longer
+    # applies to a default build.
+    #
+    # It still ranks last, for a reason the script cannot fix: the spec
     # hardcodes version 3.0-0, so rpm cannot tell one rebuild from another and
-    # a stale binary can persist unnoticed. Ranks last for those reasons.
+    # a stale binary can persist unnoticed after an apparently successful
+    # upgrade. Ranking is only a tie-breaker in any case — find_binary
+    # promotes any webview-capable build over the order below.
     Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
     Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
 ]
@@ -92,17 +97,44 @@ def _run(cmd: list[str], timeout: int = 10) -> str:
         return ""
 
 
+# Results keyed by path, modification time and size.
+#
+# Each miss costs up to three subprocesses, the last of which is `nm` over a
+# binary large enough to take seconds. find_binary probes every candidate and
+# the GUI probes whatever the user selects, so the same binary is asked
+# repeatedly within one session. Including mtime and size in the key means
+# reinstalling FreeRDP over the same path re-probes rather than returning the
+# previous build's answer.
+_webview_cache: dict[tuple[str, int, int], Webview] = {}
+
+
 def detect_webview(binary: str | Path | None) -> Webview:
     """Determine whether a binary was built with WITH_WEBVIEW=ON.
 
-    Three probes, cheapest and most authoritative first:
-      1. /buildconfig output, which names the build flags directly.
-      2. Dynamic linkage against WebKitGTK.
-      3. Defined symbols, catching a statically linked webview helper.
+    Blocks for as long as three subprocesses take, which for `nm` over a
+    FreeRDP binary can be seconds. Never call it from a UI thread on a cold
+    cache; see gui.WebviewProbe.
     """
     if not binary or not is_usable(binary):
         return Webview.UNKNOWN
+    try:
+        stat = Path(binary).stat()
+    except OSError:
+        return Webview.UNKNOWN
 
+    key = (str(binary), stat.st_mtime_ns, stat.st_size)
+    if key not in _webview_cache:
+        _webview_cache[key] = _probe_webview(binary)
+    return _webview_cache[key]
+
+
+def _probe_webview(binary: str | Path) -> Webview:
+    """Three probes, cheapest and most authoritative first:
+
+    1. /buildconfig output, which names the build flags directly.
+    2. Dynamic linkage against WebKitGTK.
+    3. Defined symbols, catching a statically linked webview helper.
+    """
     build = _run([str(binary), "/buildconfig"]).lower()
     if "with_webview" in build:
         # Matches "WITH_WEBVIEW=ON" and "-DWITH_WEBVIEW=ON" alike.

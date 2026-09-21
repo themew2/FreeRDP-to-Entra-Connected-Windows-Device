@@ -57,13 +57,32 @@ MUTUALLY_EXCLUSIVE: list[tuple[str, str]] = [
 ]
 
 
-def find_icon() -> str | None:
-    """Locate the application icon.
+def _write_private(path: Path, text: str) -> None:
+    """Write a file that is never briefly world-readable.
 
-    Checked in order: the copy bundled inside the installed Python package,
-    then the standard icon theme directories. The bundled copy means the icon
-    works even when the app is run straight from a source checkout, before
-    anything has been installed into a theme directory.
+    Path.write_text creates with the process umask — commonly 0644 — so a
+    follow-up chmod leaves a window in which the contents can be read by
+    anyone on the machine. These files hold tenant IDs, user names and
+    internal host names, so the mode is set at creation instead.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+
+
+def find_icon() -> str | None:
+    """Locate the application icon file.
+
+    This is the fallback path. __main__ asks the icon theme first, so the
+    desktop's own iconography wins where it has an entry; this function only
+    runs when that lookup produced nothing.
+
+    The copy bundled inside the Python package is checked before the theme
+    directories, and in a normal install it always wins. That is deliberate:
+    it is the one location guaranteed to exist whether the app was installed
+    or is being run straight from a source checkout. The theme directories
+    below it cover installs where the packaging stripped the bundled data.
     """
     # PNG first: some renderers reject SVGs that Qt itself accepts, so the
     # raster copy is the more dependable default.
@@ -130,10 +149,11 @@ class ProfileStore:
         return self.profiles
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self.profiles, indent=2, sort_keys=True))
-        tmp.chmod(0o600)
+        # Written to a temporary file and renamed, so an interrupted save
+        # cannot truncate an existing set of profiles. replace() carries the
+        # temporary file's 0600 mode across to the destination.
+        _write_private(tmp, json.dumps(self.profiles, indent=2, sort_keys=True))
         tmp.replace(self.path)
 
     def put(self, name: str, data: dict) -> None:
@@ -162,9 +182,7 @@ class ProfileStore:
     @last_used.setter
     def last_used(self, name: str | None) -> None:
         try:
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            STATE_FILE.write_text(json.dumps({"last_profile": name}, indent=2))
-            STATE_FILE.chmod(0o600)
+            _write_private(STATE_FILE, json.dumps({"last_profile": name}, indent=2))
         except OSError:
             # Remembering the last profile is a convenience; failing to record
             # it should never prevent the application from working.

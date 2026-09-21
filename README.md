@@ -103,12 +103,13 @@ What it gains you over the source route:
 
 Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without RPM tooling, and usable anywhere if you would rather not involve the package manager.
 
-The app prefers a binary from this prefix when both are installed, since it is built with plain release defaults and nothing else.
+The app prefers a binary from this prefix when both are installed — though not because of the build flags, since `RELEASE_BUILD` defaults on and the RPM route produces a release build too. The reason is that the nightly spec hardcodes version `3.0-0`, so `dnf` cannot tell one rebuild from another and a stale binary can survive an apparently successful upgrade. Ranking is only a tie-breaker in any case: a webview-capable build wins wherever it sits in the order.
 
 | Phase | What happens |
 |---|---|
 | Dependencies | Detects `dnf` / `apt` / `pacman` and installs the toolchain and headers |
 | Preflight | Verifies every prerequisite with `pkg-config` and reports *all* missing ones at once |
+| Resolve version | Looks up the newest `3.x.y` release tag from the remote, and refuses anything below 3.16.0 |
 | Configure | `-DWITH_WEBVIEW=ON -DWITH_AAD=ON -DWITH_PULSE=ON`, `WITH_SSO_MIB` auto-detected |
 | Gate | Aborts unless CMakeCache confirms the flags actually initialised |
 | Build & install | `cmake --build`, then `--target install` |
@@ -298,9 +299,26 @@ scripts/
                           (used automatically on RPM systems)
     build-freerdp.sh      Compiles to a private prefix; used elsewhere,
                           and preferred by the app when both are present
+    freerdp-common.sh     Sourced by the three above: reporting helpers and
+                          release-tag resolution, so both build routes agree
+                          on which version they produce
     diagnose-icon.sh      Reports why the application icon may not appear
+tests/                 Command assembly, input sanitizing, profile storage
 data/                  Desktop entry, AppStream metainfo, icon
 ```
+
+### Tests
+
+The suite covers the pure logic and needs neither a display nor a FreeRDP binary:
+
+```bash
+pip install . pytest ruff
+pytest tests/
+ruff check src/ tests/
+shellcheck scripts/*.sh docs/*.sh
+```
+
+CI runs those three checks on every push, plus `desktop-file-validate` and `appstreamcli` on the desktop metadata.
 
 ---
 

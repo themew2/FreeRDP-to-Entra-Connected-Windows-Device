@@ -13,20 +13,21 @@
 
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/freerdp-common.sh
+source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version
+
 PREFIX="${ENTRARDP_PREFIX:-$HOME/.local/share/entrardp/freerdp}"
 SRC="${ENTRARDP_SRC:-$HOME/.cache/entrardp/FreeRDP}"
 JOBS="${JOBS:-$(nproc)}"
-BRANCH="${FREERDP_BRANCH:-master}"
-# Note: webview support requires FreeRDP 3.16.0 or newer. Building from a
-# recent branch satisfies this; the post-install check confirms the result.
+# Set by resolve_version(): the newest release tag, or FREERDP_BRANCH if set.
+# Deliberately not defaulted to a branch — see resolve_version in
+# scripts/freerdp-common.sh for why, and the minimum-version check it enforces.
+BRANCH=""
 # Automatic token retrieval via a local identity broker. Optional, and not
 # required for the webview sign-in flow. "auto" enables it only when the
 # sso-mib library is actually present; set ON or OFF to force either way.
 WITH_SSO_MIB="${WITH_SSO_MIB:-auto}"
-
-info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn()  { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
-die()   { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- deps
 
@@ -370,6 +371,7 @@ main() {
     [[ $EUID -eq 0 ]] && die "Do not run this as root; it installs into your home directory."
     install_deps
     check_deps
+    resolve_version
     fetch_source
     configure_and_build
     verify

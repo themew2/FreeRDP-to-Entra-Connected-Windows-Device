@@ -28,6 +28,10 @@
 
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/freerdp-common.sh
+source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version
+
 SRC="${ENTRARDP_RPM_SRC:-$HOME/.cache/entrardp/FreeRDP-rpm}"
 # Set by resolve_version(): the newest release tag, or FREERDP_BRANCH if set.
 BRANCH=""
@@ -36,55 +40,9 @@ BRANCH=""
 RELEASE_BUILD="${RELEASE_BUILD:-1}"
 AUTO_INSTALL="${AUTO_INSTALL:-1}"
 
-info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn()  { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
-die()   { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
-
 [[ $EUID -eq 0 ]] && die "Do not run this as root."
 command -v rpmbuild >/dev/null || command -v dnf >/dev/null || \
     die "This script requires an RPM-based distribution. Use scripts/build-freerdp.sh instead."
-
-
-# ------------------------------------------------------- version resolution
-
-# Resolve the newest stable release tag rather than defaulting to a branch.
-#
-# FreeRDP tags releases directly on master (3.31.1, 3.31.0, ...). Defaulting
-# to a branch name is fragile: master carries unreleased changes, and a
-# stable-x.y branch may not track the current series. Resolving the newest tag
-# at build time always yields a real release, without hardcoding a version
-# that goes stale. Security releases are frequent here, so being a few
-# versions behind is a real exposure rather than a cosmetic issue.
-resolve_version() {
-    if [[ -n "${FREERDP_BRANCH:-}" ]]; then
-        BRANCH="$FREERDP_BRANCH"
-        info "Using requested ref: $BRANCH"
-        return 0
-    fi
-
-    info "Resolving the newest FreeRDP release tag"
-    local tags
-    tags=$(git ls-remote --tags --refs https://github.com/FreeRDP/FreeRDP.git 2>/dev/null \
-        | sed 's#.*refs/tags/##' \
-        | grep -E '^3\.[0-9]+\.[0-9]+$' \
-        | sort -t. -k1,1n -k2,2n -k3,3n) || true
-
-    if [[ -z "$tags" ]]; then
-        warn "Could not list remote tags. Set FREERDP_BRANCH to a release, e.g. 3.31.1"
-        die "Unable to determine which version to build."
-    fi
-
-    BRANCH=$(echo "$tags" | tail -1)
-
-    # Webview support arrived in 3.16.0.
-    local minor
-    minor=$(echo "$BRANCH" | cut -d. -f2)
-    if [[ "$minor" -lt 16 ]]; then
-        die "Newest tag $BRANCH predates webview support (needs 3.16.0 or newer)."
-    fi
-
-    info "Building release $BRANCH"
-}
 
 # ------------------------------------------------------------- prerequisites
 
@@ -228,6 +186,16 @@ install_build_deps() {
 install_build_deps
 
 info "Building the RPM (this takes a while; the spec also runs the test suite)"
+
+# Marks the moment the build started, so "freshly built" below means "newer
+# than this run" rather than a guess at how long the build takes.
+#
+# Not a fixed age like -newermt '-2 hours': FreeRDP plus the spec's test suite
+# exceeds two hours on modest hardware, which would exclude the RPMs this run
+# just produced and report a successful build as a failure.
+MARKER="$(mktemp -t entrardp-rpm-start.XXXXXX)"
+trap 'rm -f "$MARKER"' EXIT
+
 cd "$SRC"
 bash "$CREATE" || die "create_rpm.sh failed. Its output above should say why."
 
@@ -237,7 +205,7 @@ bash "$CREATE" || die "create_rpm.sh failed. Its output above should say why."
 # losing the explicit empty-result message below that actually tells the user
 # what to check.
 mapfile -t RPMS < <(find "$HOME/rpmbuild/RPMS" -name 'freerdp-nightly-*.rpm' \
-    -newermt '-2 hours' 2>/dev/null | grep -v debuginfo | sort || true)
+    -newer "$MARKER" 2>/dev/null | grep -v debuginfo | sort || true)
 
 if [[ ${#RPMS[@]} -eq 0 ]]; then
     warn "No freshly built RPMs found under ~/rpmbuild/RPMS."
