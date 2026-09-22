@@ -14,6 +14,7 @@ from entrardp.config import (
     ProfileStore,
     clean_value,
     expand_flag,
+    parse_env,
 )
 
 # ---------------------------------------------------------------- clean_value
@@ -38,6 +39,56 @@ def test_clean_value(raw, expected):
 def test_clean_value_keeps_inner_structure():
     """Flag syntax must survive: only quotes and edge whitespace are stripped."""
     assert clean_value("  /drive:home,/home/me  ") == "/drive:home,/home/me"
+
+
+# ------------------------------------------------------------------ parse_env
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (None, []),
+    ("", []),
+    ("FOO=bar", [("FOO", "bar")]),
+    ("  FOO = bar  ", [("FOO", "bar")]),
+    # An empty value is a legitimate assignment, not a missing one.
+    ("FOO=", [("FOO", "")]),
+    # Only the first '=' separates; the rest belongs to the value.
+    ("FOO=a=b", [("FOO", "a=b")]),
+    # Quotes written for a shell, around a value that needs them there.
+    ('FOO="a b"', [("FOO", "a b")]),
+    ("FOO='a b'", [("FOO", "a b")]),
+    # A quote inside the value is part of the value.
+    ('FOO=a"b', [("FOO", 'a"b')]),
+    ("# note\n\nFOO=bar\nBAZ=1", [("FOO", "bar"), ("BAZ", "1")]),
+    (" FOO = bar ", [("FOO", "bar")]),
+])
+def test_parse_env_pairs(raw, expected):
+    pairs, errors = parse_env(raw)
+    assert pairs == expected
+    assert errors == []
+
+
+@pytest.mark.parametrize("raw", [
+    "NOEQUALS",
+    "2FOO=bar",      # a name cannot start with a digit
+    "FOO BAR=baz",   # a space is not part of a name
+    "=bar",          # no name at all
+    "FOO-BAR=baz",   # '-' is not portable in a name
+])
+def test_parse_env_rejects_bad_lines(raw):
+    pairs, errors = parse_env(raw)
+    assert pairs == []
+    assert len(errors) == 1
+
+
+def test_parse_env_keeps_the_good_lines():
+    """One bad line must not discard the rest of the list."""
+    pairs, errors = parse_env("FOO=1\nbroken\nBAR=2")
+    assert pairs == [("FOO", "1"), ("BAR", "2")]
+    assert len(errors) == 1
+
+
+def test_parse_env_last_duplicate_is_not_resolved_here():
+    """Both are returned; Connection decides which wins."""
+    assert parse_env("FOO=1\nFOO=2")[0] == [("FOO", "1"), ("FOO", "2")]
 
 
 # --------------------------------------------------------------- flag tables

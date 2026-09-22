@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -253,7 +254,8 @@ class MainWindow(QWidget):
         res_row.addStretch()
         root.addWidget(res)
 
-        env_row = QHBoxLayout()
+        envbox = QGroupBox("Environment")
+        envlayout = QVBoxLayout(envbox)
         self.force_x11 = QCheckBox("Force X11 video driver (SDL_VIDEODRIVER=x11)")
         self.force_x11.setChecked(True)
         self.force_x11.setToolTip(
@@ -261,9 +263,32 @@ class MainWindow(QWidget):
             "The Entra webview popup does not map reliably on native Wayland."
         )
         self.force_x11.stateChanged.connect(self._refresh)
-        env_row.addWidget(self.force_x11)
-        env_row.addStretch()
-        root.addLayout(env_row)
+        self.no_compositing = QCheckBox(
+            "Disable WebKit compositing (WEBKIT_DISABLE_COMPOSITING_MODE=1)"
+        )
+        self.no_compositing.setToolTip(
+            "Turns off WebKitGTK's accelerated compositing.\n"
+            "The Entra sign-in webview crashes on some GPU and driver\n"
+            "combinations without this."
+        )
+        self.no_compositing.stateChanged.connect(self._refresh)
+        self.env_in = QPlainTextEdit()
+        self.env_in.setPlaceholderText("GDK_BACKEND=x11\nLIBGL_ALWAYS_SOFTWARE=1")
+        self.env_in.setMaximumHeight(72)
+        # Tab moves on rather than inserting a tab: this box sits in the middle
+        # of the form, and three lines of text do not need indentation.
+        self.env_in.setTabChangesFocus(True)
+        self.env_in.setToolTip(
+            "Passed to the client through env, one assignment per line.\n"
+            "Values may contain spaces; a surrounding pair of quotes is dropped.\n"
+            "An entry here overrides the checkboxes above."
+        )
+        self.env_in.textChanged.connect(self._refresh)
+        envlayout.addWidget(self.force_x11)
+        envlayout.addWidget(self.no_compositing)
+        envlayout.addWidget(QLabel("Custom variables, one KEY=VALUE per line:"))
+        envlayout.addWidget(self.env_in)
+        root.addWidget(envbox)
 
         extra_row = QHBoxLayout()
         self.extra_in = QLineEdit()
@@ -307,6 +332,8 @@ class MainWindow(QWidget):
             width=self.width_in.value(),
             height=self.height_in.value(),
             force_x11=self.force_x11.isChecked(),
+            disable_compositing=self.no_compositing.isChecked(),
+            extra_env=self.env_in.toPlainText(),
             extra=self.extra_in.text(),
             workspace_file=self.workspace_in.text(),
         )
@@ -371,7 +398,12 @@ class MainWindow(QWidget):
 
     def _refresh(self):
         conn = self._connection()
-        self.preview.setPlainText(" \\\n    ".join(conn.command()))
+        # Quoted, because the preview is there to be pasted into a terminal
+        # and a custom environment value may contain spaces. shlex.quote
+        # leaves everything that needs no quoting exactly as it was.
+        self.preview.setPlainText(
+            " \\\n    ".join(shlex.quote(a) for a in conn.command())
+        )
         host = clean_value(self.host_in.text())
         workspace = clean_value(self.workspace_in.text())
         # Either a host or a workspace file identifies the target; one is
@@ -526,7 +558,7 @@ class MainWindow(QWidget):
 
     # ------------------------------------------------------------ actions
     def _copy(self):
-        QApplication.clipboard().setText(" ".join(self._connection().command()))
+        QApplication.clipboard().setText(shlex.join(self._connection().command()))
         self._set_status("Command copied to clipboard", "ok")
 
     def _connect(self):
@@ -631,8 +663,11 @@ class MainWindow(QWidget):
         self.height_in.setValue(data.get("height", 1440))
         self.force_x11.setChecked(data.get("force_x11", True))
         self.extra_in.setText(data.get("extra", ""))
-        # Absent from profiles written before workspace support existed.
+        # Absent from profiles written before workspace and custom environment
+        # support existed. Their defaults are the previous behaviour.
         self.workspace_in.setText(data.get("workspace_file", ""))
+        self.no_compositing.setChecked(data.get("disable_compositing", False))
+        self.env_in.setPlainText(data.get("extra_env", ""))
         self.store.last_used = name
         self._refresh()
         self._set_status(f"Loaded '{name}'", "muted")
@@ -658,6 +693,11 @@ class MainWindow(QWidget):
             "width": conn.width,
             "height": conn.height,
             "force_x11": conn.force_x11,
+            "disable_compositing": conn.disable_compositing,
+            # Not put through clean_value: that strips every quote character,
+            # and a quote can be a legitimate part of an environment value.
+            # parse_env does the sanitizing this field needs.
+            "extra_env": conn.extra_env.strip(),
             "extra": clean_value(conn.extra),
             "workspace_file": clean_value(conn.workspace_file),
         })

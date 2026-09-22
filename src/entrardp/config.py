@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 APP_ID = "io.github.themew2.EntraRDP"
@@ -117,6 +118,56 @@ def clean_value(text: str | None) -> str:
     while len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in "\"'":
         cleaned = cleaned[1:-1].strip()
     return cleaned.replace('"', "").replace("'", "").strip()
+
+
+# POSIX portable variable names. `env` itself accepts almost anything without
+# an '=' as a name, but a name outside this set is not reliably visible to the
+# program's own getenv, so it is rejected here rather than passed on.
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def parse_env(text: str | None) -> tuple[list[tuple[str, str]], list[str]]:
+    """Split a block of KEY=VALUE lines into pairs, with complaints.
+
+    One assignment per line: a value may legitimately contain spaces, so
+    splitting on whitespace the way extra flags are split would silently
+    truncate it. Blank lines and lines starting with '#' are skipped.
+
+    Bad lines are reported rather than dropped quietly. A variable that never
+    reached the client looks exactly like one that had no effect, which is a
+    miserable thing to debug when the variable was there to stop a crash.
+    """
+    pairs: list[tuple[str, str]] = []
+    errors: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.replace(" ", " ").strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, value = line.partition("=")
+        name = name.strip()
+        if not sep:
+            errors.append(f"'{line}' is not KEY=VALUE.")
+        elif not ENV_NAME.fullmatch(name):
+            errors.append(f"'{name}' is not a valid variable name.")
+        else:
+            pairs.append((name, clean_env_value(value)))
+    return pairs, errors
+
+
+def clean_env_value(value: str) -> str:
+    """Strip edge whitespace and one surrounding pair of quotes.
+
+    These values get pasted from shell snippets, where FOO="bar baz" is simply
+    how a value containing a space is written. Those quotes belong to the
+    shell, and `env` would pass them through as part of the value.
+
+    Unlike clean_value, quotes *inside* the value survive: no shell ever sees
+    this list, so there is nothing an unbalanced quote can break.
+    """
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value
 
 
 def expand_flag(flag: str) -> str:

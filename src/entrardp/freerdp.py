@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from .config import TOGGLES, clean_value, expand_flag
+from .config import TOGGLES, clean_value, expand_flag, parse_env
 
 # Naming varies with WITH_CLIENT_SDL_VERSIONED: distribution packages commonly
 # build it OFF (sdl-freerdp), while FreeRDP's own nightly spec sets it ON
@@ -61,6 +61,16 @@ WEBVIEW_MIN_VERSION = (3, 16, 0)
 # after it is downloaded. There is no public API to refresh one, so the
 # only remedy is a manual re-download from the AVD web client.
 WORKSPACE_STALE_DAYS = 90
+
+# The environment variables with a checkbox of their own.
+#
+# The AAD webview popup does not map reliably on native Wayland, so the client
+# is run under XWayland.
+X11_ENV = ("SDL_VIDEODRIVER", "x11")
+# WebKitGTK's accelerated compositing crashes the Entra sign-in webview on some
+# GPU and driver combinations. Disabling it costs a little rendering
+# performance and gets a sign-in window that stays up.
+COMPOSITING_ENV = ("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
 
 
 class Webview(Enum):
@@ -192,6 +202,10 @@ class Connection:
     width: int = 2560
     height: int = 1440
     force_x11: bool = True
+    disable_compositing: bool = False
+    # Free-form KEY=VALUE lines, one per line. Applied after the two named
+    # variables above, so an entry here can deliberately override either.
+    extra_env: str = ""
     extra: str = ""
     # Path to an Azure Virtual Desktop workspace file (.rdpw). FreeRDP 3
     # parses these natively, so no parsing happens here. The file carries
@@ -199,13 +213,32 @@ class Connection:
     # is omitted whenever one is set.
     workspace_file: str = ""
 
+    def env_assignments(self) -> list[str]:
+        """The KEY=VALUE arguments for `env`, in the order they take effect.
+
+        A name is emitted once. `env` applies assignments left to right, so a
+        duplicate would work anyway, but the command preview is the thing
+        people read to understand what will run and a name appearing twice
+        with two values reads as a bug. Collapsing through a dict keeps each
+        name where it first appeared while the last value wins, which is what
+        `env` would have done.
+        """
+        env: dict[str, str] = {}
+        if self.force_x11:
+            env[X11_ENV[0]] = X11_ENV[1]
+        if self.disable_compositing:
+            env[COMPOSITING_ENV[0]] = COMPOSITING_ENV[1]
+        for name, value in parse_env(self.extra_env)[0]:
+            env[name] = value
+        return [f"{name}={value}" for name, value in env.items()]
+
     def command(self) -> list[str]:
         binary = clean_value(self.binary) or "sdl-freerdp"
         args: list[str] = []
 
-        if self.force_x11:
-            # The AAD webview popup does not map reliably on native Wayland.
-            args += ["env", "SDL_VIDEODRIVER=x11"]
+        env = self.env_assignments()
+        if env:
+            args += ["env", *env]
         args.append(binary)
 
         # An AVD workspace file supplies the target itself, so it replaces
@@ -287,6 +320,19 @@ class Connection:
             )
         if not clean_value(self.tenant_id):
             issues.append("No tenant ID set; Entra sign-in will likely fail.")
+        custom, env_errors = parse_env(self.extra_env)
+        issues += [f"Custom environment: {e}" for e in env_errors]
+        # A checkbox that stays ticked while a custom line replaces its value
+        # is the kind of thing that costs an hour. Name it.
+        named = [X11_ENV[0]] if self.force_x11 else []
+        if self.disable_compositing:
+            named.append(COMPOSITING_ENV[0])
+        shadowed = [n for n in named if n in {name for name, _value in custom}]
+        if shadowed:
+            issues.append(
+                f"Custom environment overrides {', '.join(shadowed)}; "
+                "the checkbox value is not used."
+            )
         if self.toggles.get("smart_sizing") and self.toggles.get("fullscreen"):
             issues.append(
                 "Smart sizing with fullscreen causes rendering artifacts on Wayland."
