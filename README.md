@@ -2,6 +2,8 @@
 
 A desktop app for connecting to **Microsoft Entra ID (Azure AD) joined Windows machines** from Linux, with native web account sign-in — the equivalent of the *"Use a web account to sign in to the remote computer"* checkbox in Windows' `mstsc.exe`.
 
+**Azure Virtual Desktop** is supported too, by pointing the app at a workspace file downloaded from the AVD web client. See [Azure Virtual Desktop](#azure-virtual-desktop).
+
 ![Entra RDP](data/screenshots/main-window.png)
 
 ---
@@ -55,7 +57,7 @@ One command. It builds a webview-enabled FreeRDP, installs the GUI, and register
 
 **Elsewhere** it compiles into a private prefix under `~/.local/share/entrardp`. Its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
 
-Both routes build the **same tagged release** of FreeRDP. They differ in packaging, not in version.
+Both routes build the **same tagged release** of FreeRDP, and both produce a release build by default. They differ in packaging, not in version.
 
 **Already have a webview-enabled FreeRDP?** Skip the compile:
 
@@ -65,11 +67,17 @@ SKIP_FREERDP=1 ./scripts/install.sh
 
 Then select your binary in the app's *FreeRDP binary* field. It will tell you whether that build supports webview.
 
-Both routes produce a release build by default. To reproduce upstream's nightly test configuration instead — debug, AddressSanitizer, verbose assertions — set `RELEASE_BUILD=0`. That is only useful when filing a bug against FreeRDP itself, and it noticeably degrades performance.
+Worth checking before committing to the compile — an existing build may already do the job:
+
+- **Nightly packages** install to `/opt/freerdp-nightly` and coexist with your distribution package. See [PreBuilds](https://github.com/FreeRDP/FreeRDP/wiki/PreBuilds).
+- **Flathub** ships `com.freerdp.FreeRDP`, with a beta channel available.
+- **RPM users** can build packages from the FreeRDP checkout using the scripts in its `packaging/scripts` directory.
+
+Test any of them with the `/buildconfig` command from [the top of this page](#the-problem-this-solves). `WITH_WEBVIEW=ON` means you can skip the compile entirely.
 
 ## What the scripts do
 
-`install.sh` is the entry point and picks a FreeRDP build route for you. The other two are the routes themselves, and can be run directly.
+`install.sh` is the entry point and picks a FreeRDP build route for you. The two build scripts are the routes themselves, and can be run directly.
 
 ```
 install.sh
@@ -149,39 +157,42 @@ rm -rf ~/.local/share/entrardp         # source route
 
 ---
 
-### Before compiling: check what you already have
-
-An existing build may already do the job:
-
-- **Nightly packages** install to `/opt/freerdp-nightly` and coexist with your distribution package. See [PreBuilds](https://github.com/FreeRDP/FreeRDP/wiki/PreBuilds).
-- **RPM users** can build packages from the FreeRDP checkout using the scripts in its `packaging/scripts` directory.
-- **Flathub** ships `com.freerdp.FreeRDP`, with a beta channel available.
-
-Check any of them with:
-
-```bash
-<path-to-binary> /buildconfig | tr ' ' '\n' | grep -i WITH_WEBVIEW
-```
-
-`WITH_WEBVIEW=ON` means you can skip the compile entirely — use `SKIP_FREERDP=1` and select that binary in the app.
-
----
-
 ## Usage
 
-Fill in three fields and press Connect:
+Fill in the fields and press Connect:
 
 | Field | Notes |
 |---|---|
 | **Host name** | Must match the Entra-registered device name **exactly**, and must resolve via DNS or `/etc/hosts`. |
+| **AVD workspace** | Optional. A `.rdpw` file from the Azure Virtual Desktop web client. Replaces the host name — see below. |
 | **User name** | `you@yourdomain.com` |
 | **Tenant ID** | Your Entra tenant GUID, from Azure Portal → Microsoft Entra ID → Overview. |
+
+Either a host name or a workspace file identifies the target; one of the two is required, and setting both is reported as a conflict.
 
 Save the combination as a named profile to reuse it. The app reopens on whichever profile you last saved or loaded.
 
 Profiles live in `~/.config/entrardp/profiles.json` and the last-used name in `~/.config/entrardp/state.json`, both mode `600`.
 
-**No credentials are ever stored.** Authentication happens entirely inside the Entra webview. The app keeps only hostnames, usernames, and tenant IDs.
+**No credentials are ever stored.** Authentication happens entirely inside the Entra webview. The app keeps only hostnames, usernames, tenant IDs, and the path to a workspace file.
+
+### Azure Virtual Desktop
+
+AVD does not hand out a host name. The web client at [client.wvd.microsoft.com](https://client.wvd.microsoft.com/arm/webclient/) gives you a **workspace file** instead — a `.rdpw` carrying the session host, the gateway address, and a load balancing token.
+
+Download one, then select it with **Browse…** next to *AVD workspace*. FreeRDP 3 parses `.rdpw` natively, so the file is passed through untouched — nothing in this app reads or rewrites it.
+
+Selecting a file changes three things:
+
+- The **host name** field greys out and its value is ignored. It is disabled rather than cleared, so pressing **Clear** restores your previous setup intact.
+- `/v:` is omitted from the command, and the file is passed positionally alongside `/gateway:type:arm`. Without that flag the client tries to reach the session host directly and fails.
+- The DNS check is skipped, since there is no host name to resolve.
+
+**Workspace files expire.** The certificate inside one is valid for a few months after download, and there is no API to refresh it — the only remedy is downloading a new file from the web client. The app warns once a file is more than 90 days old, using its modification time as a stand-in for the download date. That is an approximation, so it warns rather than blocks, and a connection failing with `0x1608` after the warning is almost always this.
+
+The field is saved with the profile, and profiles written before this feature existed load unchanged.
+
+> **Untested against a live AVD deployment.** The flag handling follows FreeRDP's documented behaviour for `.rdpw` input, but nobody has yet confirmed it end to end. Reports either way are welcome.
 
 ### Session options
 
@@ -241,7 +252,7 @@ kbuildsycoca6 --noincremental
 
 If the menu entry is still generic, restart the shell with `systemctl --user restart plasma-plasmashell`, which is quicker than logging out.
 
-A second cause is a missing `~/.local/share/icons/hicolor/index.theme`. A directory without one is not a valid icon theme, so lookups skip it and a correctly installed icon never resolves. `install.sh` now creates it. Fix an existing installation with:
+A second cause is a missing `~/.local/share/icons/hicolor/index.theme`. A directory without one is not a valid icon theme, so lookups skip it and a correctly installed icon never resolves. `install.sh` creates it. Fix an existing installation with:
 
 ```bash
 cp /usr/share/icons/hicolor/index.theme ~/.local/share/icons/hicolor/
@@ -254,7 +265,7 @@ Note that on Wayland there is no per-window icon: the compositor matches the win
 pkg-config file names differ between distributions. Find the real name with `pkg-config --list-all | grep -i <library>`, then either re-run with `SKIP_PREFLIGHT=1` or open an issue with the name so it can be added to the list.
 
 **`/usr/bin/python3: No module named pip`.**
-Some distributions do not install pip with Python. `install.sh` now handles this, but to do it by hand: `sudo dnf install python3-pip python3-pyqt6`.
+Some distributions do not install pip with Python. `install.sh` installs both for you; to do it by hand: `sudo dnf install python3-pip python3-pyqt6`.
 
 **`error: externally-managed-environment`.**
 The system Python is marked externally managed (PEP 668). `install.sh` retries automatically with `--break-system-packages`, which only affects `~/.local`, never system packages.
@@ -269,7 +280,7 @@ Your FreeRDP binary lacks webview support. The *FreeRDP binary* section will say
 `/sec:aad` is missing. The app always sets it, so this points at a stale profile or something in *Extra flags* overriding it.
 
 **Command line parsing failed at 'azure'.**
-A quote character got pasted into a field. The app strips these automatically now; if you see it, check *Extra flags*.
+A quote character got pasted into a field. The app strips these automatically; if you see it, check *Extra flags*.
 
 **Scratchy or distorted microphone audio in Teams, but fine locally.**
 Check what your binary was built with:
@@ -296,7 +307,13 @@ Leave *Force X11 video driver* enabled. The webview popup does not map reliably 
 Tick *Disable WebKit compositing* (`WEBKIT_DISABLE_COMPOSITING_MODE=1`). WebKitGTK's accelerated compositing is unreliable on some GPU and driver combinations, and the webview is the only part of the client that uses it.
 
 **Host does not resolve.**
-The app warns before connecting. Entra-joined machines often aren't in corporate DNS; add an `/etc/hosts` entry.
+The app warns before connecting. Entra-joined machines often aren't in corporate DNS; add an `/etc/hosts` entry. Not applicable when connecting through an AVD workspace file, which carries its own host and is not resolved locally.
+
+**AVD connection fails with `0x1608`, or stops working after months of use.**
+The certificate inside the workspace file has expired. Download a fresh `.rdpw` from the [AVD web client](https://client.wvd.microsoft.com/arm/webclient/) and select it again — there is no way to renew the existing one. The app warns about files older than 90 days, but that threshold is a guess based on the file's modification time, so a younger file can still be expired.
+
+**AVD connects to nothing, or times out reaching the session host.**
+The session host in a workspace file is only reachable through the ARM gateway. The app always appends `/gateway:type:arm` when a workspace file is set — if you see this, check *Extra flags* for a conflicting `/gateway:` entry, and confirm the command preview still shows it.
 
 ---
 
@@ -347,7 +364,7 @@ wrapper script. Useful if you would rather understand each step than run a scrip
 
 This is the real tradeoff of building your own FreeRDP, and it deserves to be stated plainly.
 
-Your distribution's package receives security updates through `dnf update`. A binary you built yourself does not — **you own that**. FreeRDP releases often and security fixes are substantial: 3.31.0 alone addressed 22 security advisories, with upstream telling distributors to update as soon as possible.
+Your distribution's package receives security updates through `dnf update`. A binary you built yourself does not — **you own that**. FreeRDP releases often, and individual releases have carried substantial batches of security fixes, with upstream telling distributors to update as soon as possible. What is currently outstanding is published in the [FreeRDP repository](https://github.com/FreeRDP/FreeRDP) — see its [security advisories](https://github.com/FreeRDP/FreeRDP/security/advisories) and [releases](https://github.com/FreeRDP/FreeRDP/releases).
 
 The build scripts therefore resolve the **newest release tag** at build time rather than defaulting to a branch. FreeRDP tags releases directly, so this always produces a real release without hardcoding a version that goes stale:
 
@@ -356,12 +373,14 @@ The build scripts therefore resolve the **newest release tag** at build time rat
 ./scripts/build-freerdp.sh       # everywhere else
 ```
 
-To pin a specific version, or to test unreleased changes:
+To pin a specific version, or to test unreleased changes — any tag from [the repository's releases](https://github.com/FreeRDP/FreeRDP/releases), or a branch name:
 
 ```bash
-FREERDP_BRANCH=3.31.1 ./scripts/build-freerdp-rpm.sh
+FREERDP_BRANCH=<release-tag> ./scripts/build-freerdp-rpm.sh
 FREERDP_BRANCH=master ./scripts/build-freerdp-rpm.sh
 ```
+
+A pinned ref is taken at face value and built as asked. Only automatic resolution enforces the 3.16.0 floor where webview support landed, so pinning something older produces a working client that simply cannot do webview sign-in — which the app then reports in its *FreeRDP binary* section.
 
 ### Staying on top of it
 
@@ -372,7 +391,7 @@ Check what you are running:
 ~/.local/share/entrardp/freerdp/bin/sdl-freerdp /version   # source route
 ```
 
-Then compare against [FreeRDP releases](https://github.com/FreeRDP/FreeRDP/releases) and rebuild when a security release lands. Watching [security advisories](https://github.com/FreeRDP/FreeRDP/security) or release announcements on [freerdp.com](https://www.freerdp.com/) is the low-effort version.
+Then compare against the releases page linked above and rebuild when a security release lands. Watching the repository's advisories, or release announcements on [freerdp.com](https://www.freerdp.com/), is the low-effort version.
 
 Realistically this means rebuilding a handful of times a year — not tracking every release, but not never either. An RDP client authenticates and handles untrusted network input, so it is not a good candidate for install-and-forget.
 

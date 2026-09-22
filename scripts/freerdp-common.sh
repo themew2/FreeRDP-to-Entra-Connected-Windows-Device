@@ -46,7 +46,14 @@ resolve_version() {
         | sort -t. -k1,1n -k2,2n -k3,3n) || true
 
     if [[ -z "$tags" ]]; then
-        warn "Could not list remote tags. Set FREERDP_BRANCH to a release, e.g. 3.31.1"
+        # No version named here: a hardcoded example goes stale, and the one
+        # thing worse than this failure is someone pasting an old tag from it
+        # and building a client with known advisories against it.
+        warn "Could not list FreeRDP release tags, usually no network route to github.com."
+        warn "Pick a release 3.16.0 or newer from"
+        warn "    https://github.com/FreeRDP/FreeRDP/releases"
+        warn "and pin it, for example"
+        warn "    FREERDP_BRANCH=<tag> $0"
         die "Unable to determine which version to build."
     fi
 
