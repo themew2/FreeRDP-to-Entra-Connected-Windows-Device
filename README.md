@@ -297,8 +297,8 @@ Note that rebuilding alone may not be enough: the spec hardcodes version `3.0-0`
 sudo rpm -Uvh --force ~/rpmbuild/RPMS/x86_64/freerdp-nightly-*.rpm
 ```
 
-**Horizontal line artifacts on Wayland.**
-Smart sizing combined with fullscreen is a FreeRDP SDL3 rendering bug, tracked upstream as [FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204). The app warns when both are enabled — use a fixed resolution with fullscreen instead.
+**Horizontal line artifacts on Wayland with smart sizing.**
+A FreeRDP SDL3 rendering bug ([FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204)), fixed upstream in 3.31.0. If you see it, your binary predates the fix — rebuild, or use a fixed resolution with fullscreen until you do.
 
 **The sign-in window never appears on Wayland.**
 Leave *Force X11 video driver* enabled. The webview popup does not map reliably on native Wayland.

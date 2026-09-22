@@ -160,10 +160,15 @@ def test_problems_clean_when_configured(binary):
     assert conn.problems() == []
 
 
-def test_problems_flags_smart_sizing_with_fullscreen(binary):
+def test_problems_silent_on_smart_sizing_with_fullscreen(binary):
+    """The Wayland artifact bug this once warned about is fixed upstream.
+
+    Asserted rather than simply deleted, so reintroducing the warning
+    without revisiting the fix fails here instead of in someone's session.
+    """
     conn = Connection(binary=str(binary), host="vm-1", tenant_id="t-1",
                       toggles={"smart_sizing": True, "fullscreen": True})
-    assert any("Smart sizing" in p for p in conn.problems())
+    assert conn.problems() == []
 
 
 def test_problems_does_not_resolve_dns_unless_asked(binary, monkeypatch):

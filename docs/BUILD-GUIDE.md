@@ -93,7 +93,7 @@ This installs the client, plugins, and libraries to their proper system location
 - `/sec:aad` is required alongside `/azure:` — without it, the client falls back to NLA/Kerberos and fails with `Cannot find KDC for realm`.
 - `<remote-hostname>` must match the Entra ID-registered device name exactly and must resolve via DNS/`/etc/hosts`.
 - `/cert:ignore` skips TLS certificate verification for the connection. This is convenient for a lab/self-signed setup, but it means you won't be warned if a certificate doesn't match — don't use this against a machine over an untrusted network without understanding that tradeoff. Drop the flag (and properly trust the machine's certificate instead) for anything more sensitive than a home lab.
-- Avoid combining `/smart-sizing` with `/f` (true fullscreen) — see Known Issues below.
+- `/smart-sizing` with `/f` (true fullscreen) rendered incorrectly on Wayland before 3.31.0 — see Known Issues below if you are on an older build.
 - Minimize with **Right Shift + M**; toggle fullscreen with **Right Shift + Enter** (SDL client default keybinds, different from the older xfreerdp client).
 - Adjust `/w` and `/h` to match your own display's resolution.
 
@@ -107,7 +107,7 @@ If your version predates 3.23.0, update before using `/clipboard` in any untrust
 
 ## Known issues
 
-- **`/smart-sizing` + fullscreen rendering artifacts (horizontal lines) on Wayland with the SDL3 client** — reported upstream as [FreeRDP/FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204), fixed via [PR #13205](https://github.com/FreeRDP/FreeRDP/pull/13205), targeted for the **3.31.0** release. If you're on a build after this merged, `/smart-sizing` should work correctly and this workaround is unnecessary. Until then: don't use `/smart-sizing`; use fixed `/w`/`/h` with `/f` instead.
+- **`/smart-sizing` + fullscreen rendering artifacts (horizontal lines) on Wayland with the SDL3 client** — **resolved.** Reported upstream as [FreeRDP/FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204), fixed via [PR #13205](https://github.com/FreeRDP/FreeRDP/pull/13205) and released in **3.31.0**. Since this guide tracks the newest release tag, a current build is unaffected. On anything older, use fixed `/w`/`/h` with `/f` instead of `/smart-sizing`.
 - Distro-packaged FreeRDP builds typically ship with `WITH_WEBVIEW=OFF` by default (present since 3.16.0, just often disabled by packagers) — must be explicitly enabled and built to get the native popup.
 
 ## Using the wrapper script

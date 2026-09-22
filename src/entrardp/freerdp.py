@@ -333,8 +333,4 @@ class Connection:
                 f"Custom environment overrides {', '.join(shadowed)}; "
                 "the checkbox value is not used."
             )
-        if self.toggles.get("smart_sizing") and self.toggles.get("fullscreen"):
-            issues.append(
-                "Smart sizing with fullscreen causes rendering artifacts on Wayland."
-            )
         return issues

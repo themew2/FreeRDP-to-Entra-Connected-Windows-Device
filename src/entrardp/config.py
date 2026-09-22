@@ -31,8 +31,7 @@ TOGGLES: list[tuple[str, str, str, bool, str]] = [
     ("workarea", "Fit to work area", "/workarea", False,
      "Sizes to the usable screen area, excluding panels and docks."),
     ("smart_sizing", "Smart sizing (scale)", "/smart-sizing", False,
-     ("Scales the remote desktop to the window.\n"
-      "Known issue: horizontal line artifacts with fullscreen on Wayland.")),
+     "Scales the remote desktop to the window."),
     ("multimon", "Use all monitors", "/multimon", False,
      "Span the session across every attached display."),
     ("sound", "Speaker redirection", "/sound:sys:pulse", True,
