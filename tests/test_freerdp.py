@@ -52,6 +52,58 @@ def test_force_x11_wraps_in_env():
     assert cmd[:3] == ["env", "SDL_VIDEODRIVER=x11", "/usr/bin/sdl-freerdp"]
 
 
+def test_disable_compositing_sets_the_webkit_variable():
+    cmd = Connection(binary="/usr/bin/sdl-freerdp", force_x11=False,
+                     disable_compositing=True).command()
+    assert cmd[:3] == [
+        "env", "WEBKIT_DISABLE_COMPOSITING_MODE=1", "/usr/bin/sdl-freerdp",
+    ]
+
+
+def test_named_and_custom_environment_combine():
+    cmd = Connection(force_x11=True, disable_compositing=True,
+                     extra_env="GDK_BACKEND=x11\n\nQT_SCALE_FACTOR=1").command()
+    assert cmd[:5] == [
+        "env",
+        "SDL_VIDEODRIVER=x11",
+        "WEBKIT_DISABLE_COMPOSITING_MODE=1",
+        "GDK_BACKEND=x11",
+        "QT_SCALE_FACTOR=1",
+    ]
+    assert cmd[5] == "sdl-freerdp"
+
+
+def test_custom_environment_overrides_a_checkbox():
+    """One name, one value: the explicit entry is the one that survives."""
+    cmd = Connection(force_x11=True, extra_env="SDL_VIDEODRIVER=wayland").command()
+    assert cmd[:2] == ["env", "SDL_VIDEODRIVER=wayland"]
+    assert "SDL_VIDEODRIVER=x11" not in cmd
+
+
+def test_no_env_prefix_when_nothing_is_set():
+    cmd = Connection(force_x11=False, extra_env="  \n # comment\n").command()
+    assert cmd[0] == "sdl-freerdp"
+
+
+def test_invalid_environment_lines_are_reported_not_passed(binary):
+    conn = Connection(binary=str(binary), host="vm-1", tenant_id="t-1",
+                      force_x11=False, extra_env="OOPS\nGDK_BACKEND=x11")
+    assert conn.command()[:2] == ["env", "GDK_BACKEND=x11"]
+    assert any("OOPS" in p for p in conn.problems())
+
+
+def test_problems_names_a_shadowed_checkbox(binary):
+    conn = Connection(binary=str(binary), host="vm-1", tenant_id="t-1",
+                      force_x11=True, extra_env="SDL_VIDEODRIVER=wayland")
+    assert any("SDL_VIDEODRIVER" in p for p in conn.problems())
+
+
+def test_problems_quiet_when_custom_environment_is_valid(binary):
+    conn = Connection(binary=str(binary), host="vm-1", tenant_id="t-1",
+                      disable_compositing=True, extra_env="GDK_BACKEND=x11")
+    assert conn.problems() == []
+
+
 def test_manual_resolution():
     cmd = Connection(manual_res=True, width=1920, height=1080, force_x11=False).command()
     assert "/w:1920" in cmd and "/h:1080" in cmd

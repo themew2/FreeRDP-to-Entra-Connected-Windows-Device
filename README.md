@@ -189,6 +189,18 @@ Every checkbox maps to exactly one FreeRDP flag, shown in its tooltip and reflec
 
 Defaults match a verified-working configuration: fullscreen, fixed resolution, certificate bypass, audio in and out, and clipboard sharing.
 
+### Environment
+
+Two checkboxes and a free-text list build the `env` prefix shown at the front of the command preview:
+
+| Control | Effect |
+|---|---|
+| **Force X11 video driver** | `SDL_VIDEODRIVER=x11`. On by default; the sign-in popup does not map reliably on native Wayland. |
+| **Disable WebKit compositing** | `WEBKIT_DISABLE_COMPOSITING_MODE=1`. Off by default. Turn it on if the sign-in webview crashes. |
+| **Custom variables** | One `KEY=VALUE` per line. Values may contain spaces, and a surrounding pair of quotes is dropped so a line copied from a shell snippet works as written. `#` starts a comment. |
+
+Custom entries are applied last, so naming `SDL_VIDEODRIVER` or `WEBKIT_DISABLE_COMPOSITING_MODE` there overrides the checkbox — the app says so rather than letting a ticked box lie. A line that is not a valid assignment is reported and skipped, never passed on silently. All three are saved with the profile.
+
 ### Keyboard shortcuts inside a session
 
 These are SDL client defaults, and differ from the older `xfreerdp` client:
@@ -279,6 +291,9 @@ Smart sizing combined with fullscreen is a FreeRDP SDL3 rendering bug, tracked u
 
 **The sign-in window never appears on Wayland.**
 Leave *Force X11 video driver* enabled. The webview popup does not map reliably on native Wayland.
+
+**The sign-in webview crashes, or the window appears and vanishes.**
+Tick *Disable WebKit compositing* (`WEBKIT_DISABLE_COMPOSITING_MODE=1`). WebKitGTK's accelerated compositing is unreliable on some GPU and driver combinations, and the webview is the only part of the client that uses it.
 
 **Host does not resolve.**
 The app warns before connecting. Entra-joined machines often aren't in corporate DNS; add an `/etc/hosts` entry.
