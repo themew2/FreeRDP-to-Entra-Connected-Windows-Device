@@ -10,23 +10,32 @@ A desktop app for connecting to **Microsoft Entra ID (Azure AD) joined Windows m
 
 ## The problem this solves
 
-Distribution packages generally enable everything Entra sign-in needs **except one flag**. On Fedora 44:
+Signing in to an Entra-joined machine needs a browser. How FreeRDP provides one depends on its version and on how it was built, and two binaries with the same name can behave completely differently:
+
+| FreeRDP | Sign-in window | Enabled by |
+|---|---|---|
+| before 3.16 | none | — |
+| 3.16 – 3.31 | embedded WebKitGTK window inside the client | `WITH_WEBVIEW` |
+| 3.32 and newer | separate **sign-in helper** programs: the default web browser, or an embedded window | `WITH_XDG_AAD_AUTH_HELPER`, `WITH_WEBVIEW_AAD_AUTH_HELPER`, `WITH_QT_AAD_AUTH_HELPER` |
+
+A build with none of these degrades to a copy-and-paste ritual: the client prints a login URL, you open it in a browser, sign in, then paste the redirect URL back into the terminal.
+
+For years distribution packages shipped that way, because the in-process webview pulls its helper library through CMake FetchContent at configure time, which packaging policies forbid. FreeRDP 3.32 moved sign-in out of the client into helpers, and the browser-based one needs nothing fetched. **Fedora 45 ships it:**
 
 ```console
-$ /usr/bin/sdl-freerdp /buildconfig | tr ' ' '\n' | grep -iE 'WITH_AAD|WITH_PULSE|WITH_SSO_MIB|WITH_WEBVIEW'
+$ /usr/bin/sdl-freerdp /buildconfig | tr ' ' '\n' | grep -E 'WITH_AAD|AUTH_HELPER'
 WITH_AAD=ON
-WITH_PULSE=ON
-WITH_SSO_MIB=ON
-WITH_WEBVIEW=OFF
+WITH_QT_AAD_AUTH_HELPER=OFF
+WITH_WEBVIEW_AAD_AUTH_HELPER=OFF
+WITH_XDG_AAD_AUTH_HELPER=ON
 ```
 
-`WITH_WEBVIEW=OFF` is the whole problem. Without it, signing in degrades to a copy-and-paste ritual: the client prints a login URL, you open it in a browser, sign in, then paste the redirect URL back into the terminal. With it, a browser window opens inside the app and sign-in just works.
+So on a current distribution there may be nothing to compile at all. This app probes whichever binary it is about to run and tells you which sign-in methods it offers — or that it has none, or that it can no longer start — before you connect. **Name equality is not build equality.** To see the same verdict from a terminal:
 
-This is not distribution carelessness. FreeRDP pulls its webview helper (`akallabeth/webview`) via CMake FetchContent at configure time, and packaging policies commonly forbid fetching sources during a build. Enabling it in a package would require that helper to be packaged independently first.
-
-Support landed upstream in **FreeRDP 3.16.0**, so anything older cannot have it regardless of configuration. Newer packages vary — run the check above on your own system before compiling anything.
-
-Both builds are named `sdl-freerdp`. **Name equality is not build equality** — which is why this app probes the binary it is about to run and tells you which one you have before you connect.
+```bash
+PYTHONPATH=src python3 -m entrardp.freerdp            # every installed client
+PYTHONPATH=src python3 -m entrardp.freerdp /path/to/sdl-freerdp
+```
 
 ---
 
@@ -34,12 +43,13 @@ Both builds are named `sdl-freerdp`. **Name equality is not build equality** —
 
 | Platform | Status |
 |---|---|
-| **Fedora 44** | Tested end to end via both paths |
-| Other Fedora / RHEL / openSUSE | Should work; builds from upstream's own spec |
-| Debian / Ubuntu / Arch | **Untested.** Falls back to the source build, whose dependency lists have only been exercised on Fedora |
+| **Fedora 45** | Tested. The distribution's FreeRDP signs in through the default browser; no compile |
+| **Fedora 44** | Tested end to end through both build routes |
+| Other Fedora / RHEL | Should work. Uses the distribution package if it has a sign-in helper, otherwise builds from upstream's own spec |
+| Debian / Ubuntu / Arch | **Untested.** Uses the distribution package if it qualifies, otherwise the source build, whose dependency lists have only been exercised on Fedora |
 | Anything else | No automatic FreeRDP build. Supply your own binary and use `SKIP_FREERDP=1` |
 
-The GUI itself is distribution-independent — it needs a FreeRDP binary built with `WITH_WEBVIEW=ON` and does not care where that came from. Only the FreeRDP build differs by platform.
+The GUI itself is distribution-independent — it needs a FreeRDP binary that can sign in and does not care where that came from.
 
 On untested platforms the source build runs a preflight check through `pkg-config` before compiling, so a wrong package name produces a precise list of what is missing rather than an obscure build failure. Reports of what was actually needed on your distribution are welcome.
 
@@ -51,46 +61,40 @@ cd FreeRDP-to-Entra-Connected-Windows-Device
 ./scripts/install.sh
 ```
 
-One command. It builds a webview-enabled FreeRDP, installs the GUI, and registers the desktop entry. Budget 20–40 minutes, almost all of it compiling. Only the dependency step needs `sudo`.
+One command. It installs PyQt6 if needed, checks every installed FreeRDP client for sign-in support, compiles one **only if none qualifies**, then installs the app and its desktop entry. On Fedora 45 that takes seconds. When a compile is needed, budget 20–40 minutes. Only package installation needs `sudo`.
 
-**On RPM systems** it builds through FreeRDP's own packaging, producing a package `dnf` tracks, installed to `/opt/freerdp-nightly`. This is the route the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+When it does compile, it builds the newest FreeRDP release with **both** sign-in helpers — default browser and embedded window — so the app can offer either:
 
-**Elsewhere** it compiles into a private prefix under `~/.local/share/entrardp`. Its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
+- **With `dnf`** it builds through FreeRDP's own packaging, producing a package `dnf` tracks, installed to `/opt/freerdp-nightly`. This is the route the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+- **Elsewhere** it compiles into a private prefix under `~/.local/share/entrardp`. Its dependency lists are maintained here rather than upstream and have only been exercised on Fedora — see [Platform support](#platform-support).
 
-Both routes build the **same tagged release** of FreeRDP, and both produce a release build by default. They differ in packaging, not in version.
+| Variable | Effect |
+|---|---|
+| `FORCE_FREERDP_BUILD=1` | Compile even though an installed FreeRDP can sign in. The way to get the embedded sign-in window when your distribution only ships the browser helper |
+| `SKIP_FREERDP=1` | Never compile. Select your binary in the app's *FreeRDP binary* field, which reports what it supports |
 
-**Already have a webview-enabled FreeRDP?** Skip the compile:
-
-```bash
-SKIP_FREERDP=1 ./scripts/install.sh
-```
-
-Then select your binary in the app's *FreeRDP binary* field. It will tell you whether that build supports webview.
-
-Worth checking before committing to the compile — an existing build may already do the job:
-
-- **Nightly packages** install to `/opt/freerdp-nightly` and coexist with your distribution package. See [PreBuilds](https://github.com/FreeRDP/FreeRDP/wiki/PreBuilds).
-- **Flathub** ships `com.freerdp.FreeRDP`, with a beta channel available.
-- **RPM users** can build packages from the FreeRDP checkout using the scripts in its `packaging/scripts` directory.
-
-Test any of them with the `/buildconfig` command from [the top of this page](#the-problem-this-solves). `WITH_WEBVIEW=ON` means you can skip the compile entirely.
+The app itself is copied to `~/.local/share/entrardp/app` and started by a small launcher at `~/.local/bin/entrardp`, which runs it with whichever `python3` is current. Earlier versions used `pip install --user`, which ties an install to one Python version and broke when Fedora 45 moved from Python 3.14 to 3.15; re-running `install.sh` removes that old copy.
 
 ## What the scripts do
 
-`install.sh` is the entry point and picks a FreeRDP build route for you. The two build scripts are the routes themselves, and can be run directly.
+`install.sh` is the entry point. The two build scripts are the routes it may take, and can be run directly.
 
 ```
 install.sh
-  ├─ build-freerdp-rpm.sh   on RPM systems
-  ├─ build-freerdp.sh       everywhere else
-  ├─ python3-pip, python3-pyqt6   installed if missing
-  ├─ pip install                  the app, to ~/.local/bin/entrardp
+  ├─ python3-pyqt6                installed if missing
+  ├─ python3 -m entrardp.freerdp  can an installed FreeRDP sign in already?
+  │    yes → no compile
+  │    no  → build-freerdp-rpm.sh   with dnf
+  │          build-freerdp.sh       everywhere else
+  ├─ the app, to ~/.local/share/entrardp/app, launcher ~/.local/bin/entrardp
   └─ desktop entry, icons, AppStream metainfo
 ```
 
-### `scripts/build-freerdp-rpm.sh` — RPM systems
+Both build scripts decide what to enable **from the FreeRDP source tree itself**: a tree with `client/common/webview-aad-helper` (3.32+) gets the browser and embedded-window helpers, an older one gets `WITH_WEBVIEW`. Passing `-DWITH_WEBVIEW=ON` to a 3.32 tree is silently ignored by CMake and yields a client with no sign-in window, which is what this project's own scripts did until they learned the difference.
 
-Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec` and `packaging/scripts/create_rpm.sh`, patching the spec to set `WITH_WEBVIEW=ON`. The spec already declares the WebKitGTK build dependency.
+### `scripts/build-freerdp-rpm.sh` — dnf systems
+
+Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec` and `packaging/scripts/create_rpm.sh`, patching the spec to enable both sign-in helpers. The spec already declares the WebKitGTK build dependency and packages everything installed to `libexec`, where the helpers go.
 
 What it gains you over the source route:
 
@@ -101,31 +105,31 @@ What it gains you over the source route:
 
 **The "nightly" in the file name refers to how upstream publishes test packages, not to the branch built.** The source is the same tagged release the other script uses. What differs is the spec's build configuration, which is tuned for nightly testing: debug build, AddressSanitizer, `WITH_VERBOSE_WINPR_ASSERT`, experimental VAAPI H264 encoding. This script turns all of that off by default, because a build carrying it produced audibly degraded microphone capture in Teams calls where a plain release build of the same tag did not.
 
+The spec hardcodes version `3.0-0`, so every rebuild looks identical to `dnf`, and `dnf install` would report success while leaving the old binary in place. The script uses `dnf reinstall` when the package is already installed.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `RELEASE_BUILD=0` | on | Build upstream's nightly test configuration instead. Slower, and known to degrade audio. Use only when reporting a bug to FreeRDP |
 | `AUTO_INSTALL=0` | on | Build the RPM but do not install it |
-| `FREERDP_BRANCH` | newest release tag | Branch or tag to build. Must be ≥ 3.16.0 for webview support |
+| `FREERDP_BRANCH` | newest release tag | Branch or tag to build. Must be ≥ 3.16.0 for any sign-in window |
 
 ### `scripts/build-freerdp.sh` — everywhere else
 
-Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without RPM tooling, and usable anywhere if you would rather not involve the package manager.
-
-The app prefers a binary from this prefix when both are installed — though not because of the build flags, since `RELEASE_BUILD` defaults on and the RPM route produces a release build too. The reason is that the nightly spec hardcodes version `3.0-0`, so `dnf` cannot tell one rebuild from another and a stale binary can survive an apparently successful upgrade. Ranking is only a tie-breaker in any case: a webview-capable build wins wherever it sits in the order.
+Compiles FreeRDP directly into `~/.local/share/entrardp/freerdp`, a private prefix that will not collide with your distribution's package. Used on systems without `dnf`, and usable anywhere if you would rather not involve the package manager.
 
 | Phase | What happens |
 |---|---|
 | Dependencies | Detects `dnf` / `apt` / `pacman` and installs the toolchain and headers |
 | Preflight | Verifies every prerequisite with `pkg-config` and reports *all* missing ones at once |
 | Resolve version | Looks up the newest `3.x.y` release tag from the remote, and refuses anything below 3.16.0 |
-| Configure | `-DWITH_WEBVIEW=ON -DWITH_AAD=ON -DWITH_PULSE=ON`, `WITH_SSO_MIB` auto-detected |
-| Gate | Aborts unless CMakeCache confirms the flags actually initialised |
+| Configure | From scratch every time, with the sign-in flags for this tree, `-DWITH_AAD=ON -DWITH_PULSE=ON`, and `WITH_SSO_MIB` auto-detected |
+| Gate | Aborts unless each sign-in helper's directory was actually configured |
 | Build & install | `cmake --build`, then `--target install` |
-| Verify | Runs `/buildconfig` on the installed binary |
+| Verify | Confirms the helpers were installed beside the client |
 
-The repeated checks exist because the failure they prevent is a *silent* one: CMake accepts a flag it has not yet defined without complaint, so a build can succeed, install cleanly, run fine, and simply lack the feature you asked for.
+The gate exists because the failure it prevents is a *silent* one: CMake accepts a flag nothing defines without complaint, so a build can succeed, install cleanly, run fine, and simply lack the feature you asked for. Checking the CMake cache is not enough — an unknown flag is cached too — so the gate checks that CMake configured the helper's own subdirectory.
 
-Its dependency lists are maintained in this repository and have only been exercised on Fedora. The `apt` and `pacman` branches print a warning to that effect.
+Configuring from scratch matters after an OS upgrade, which is the usual reason to rebuild: a cache from before it records library versions that no longer exist.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -143,12 +147,12 @@ Reports why the application icon may not be appearing, checking each step of the
 ### Uninstalling
 
 ```bash
-pip uninstall entrardp
+rm -rf ~/.local/share/entrardp/app ~/.local/bin/entrardp
 rm -f ~/.local/share/applications/io.github.themew2.EntraRDP.desktop
 rm -rf ~/.config/entrardp ~/.cache/entrardp
 ```
 
-Then remove FreeRDP, depending on which route was used:
+Then remove FreeRDP, if this project built one:
 
 ```bash
 sudo dnf remove freerdp-nightly        # RPM route
@@ -174,7 +178,40 @@ Save the combination as a named profile to reuse it. The app reopens on whicheve
 
 Profiles live in `~/.config/entrardp/profiles.json` and the last-used name in `~/.config/entrardp/state.json`, both mode `600`.
 
-**No credentials are ever stored.** Authentication happens entirely inside the Entra webview. The app keeps only hostnames, usernames, tenant IDs, and the path to a workspace file.
+**No credentials are ever stored.** Authentication happens entirely in the sign-in window, which belongs to FreeRDP, not to this app. The app keeps only hostnames, usernames, tenant IDs, and the path to a workspace file.
+
+### Sign-in method
+
+The *FreeRDP binary* section reports how the selected binary signs in, in plain terms:
+
+| Report | Meaning |
+|---|---|
+| **Sign-in helper available** (green) | FreeRDP 3.32+ with at least one helper installed beside it. No copy and paste |
+| **Embedded sign-in window** (green) | FreeRDP 3.16–3.31 built with `WITH_WEBVIEW` |
+| **No sign-in window** (orange) | Sign-in will print a URL to paste into a browser and back. Also says when a helper was configured but its program is missing |
+| **This build cannot start** (red) | Libraries it was linked against are gone, almost always after an OS upgrade. Connect is disabled, and the app switches to a working binary if it can find one |
+
+When the binary has more than one helper, *Sign-in method* chooses between them:
+
+| Choice | What happens |
+|---|---|
+| **Automatic** | FreeRDP picks, in its own order: default browser, then Qt, then WebKitGTK |
+| **Default web browser** | Opens the sign-in page in your browser, which already holds any Microsoft session you have. FreeRDP registers a small handler to receive the result |
+| **Embedded window (WebKitGTK / Qt WebEngine)** | A dedicated sign-in window, the pre-3.32 experience |
+
+The choice becomes `/azure:…,auth-helper:<path>` in the command preview, and is saved with the profile by name rather than path, so a profile moves cleanly between machines and FreeRDP installs. A profile asking for a helper the current binary lacks falls back to Automatic without forgetting the preference.
+
+### On-screen toolbar
+
+A fullscreen session covers the whole screen, which on a single monitor leaves no visible way out. Tick **On-screen toolbar in fullscreen** to get a small bar at the top edge with minimize, restore and close buttons.
+
+FreeRDP's SDL client, which the app normally runs, has no such toolbar: it accepts `/floatbar` and ignores it. So with the box ticked the app runs **`xfreerdp`, FreeRDP's X11 client, from the same install** instead, adding:
+
+```
+/floatbar:sticky:off,default:visible,show:fullscreen
+```
+
+The bar starts visible, slides away, and comes back when the mouse touches the top edge of the screen. It appears only in fullscreen. Sign-in is unchanged — both clients use the same sign-in helpers — and every session option applies to either client. The checkbox is greyed out when no `xfreerdp` (or `xfreerdp3`) sits beside the selected binary; Fedora's `freerdp` package and both build routes here install one. The setting is saved with the profile.
 
 ### Azure Virtual Desktop
 
@@ -206,20 +243,20 @@ Two checkboxes and a free-text list build the `env` prefix shown at the front of
 
 | Control | Effect |
 |---|---|
-| **Force X11 video driver** | `SDL_VIDEODRIVER=x11`. On by default; the sign-in popup does not map reliably on native Wayland. |
-| **Disable WebKit compositing** | `WEBKIT_DISABLE_COMPOSITING_MODE=1`. Off by default. Turn it on if the sign-in webview crashes. |
+| **Force X11 video driver** | `SDL_VIDEODRIVER=x11`. On by default; an embedded sign-in window does not map reliably on native Wayland. Unneeded when signing in through the browser. |
+| **Disable WebKit compositing** | `WEBKIT_DISABLE_COMPOSITING_MODE=1`. Off by default. Turn it on if an embedded WebKitGTK sign-in window crashes. Sign-in helpers inherit the client's environment, so this reaches them too. |
 | **Custom variables** | One `KEY=VALUE` per line. Values may contain spaces, and a surrounding pair of quotes is dropped so a line copied from a shell snippet works as written. `#` starts a comment. |
 
 Custom entries are applied last, so naming `SDL_VIDEODRIVER` or `WEBKIT_DISABLE_COMPOSITING_MODE` there overrides the checkbox — the app says so rather than letting a ticked box lie. A line that is not a valid assignment is reported and skipped, never passed on silently. All three are saved with the profile.
 
 ### Keyboard shortcuts inside a session
 
-These are SDL client defaults, and differ from the older `xfreerdp` client:
+The two clients use different defaults:
 
-| Keys | Action |
-|---|---|
-| `Right Shift` + `Enter` | Toggle fullscreen |
-| `Right Shift` + `M` | Minimize |
+| Action | SDL client (default) | X11 client (on-screen toolbar) |
+|---|---|---|
+| Toggle fullscreen | `Right Shift` + `Enter` | `Ctrl` + `Alt` + `Enter` |
+| Minimize | `Right Shift` + `M` | toolbar button |
 
 ---
 
@@ -237,7 +274,7 @@ Install `libxkbcommon-devel` (Fedora), `libxkbcommon-dev` (Debian/Ubuntu), or `l
 FreeRDP needs a JSON parser for Entra token handling. Install `jansson-devel` (Fedora), `libjansson-dev` (Debian/Ubuntu), or `jansson` (Arch).
 
 **`The following required packages were not found: sso-mib>=0.5.0`.**
-Only happens if you forced `WITH_SSO_MIB=ON` without the library installed. The default is `auto`, which detects it and builds without it when absent. It is optional and unrelated to webview sign-in — install `sso-mib-devel` only if you use a local identity broker.
+Only happens if you forced `WITH_SSO_MIB=ON` without the library installed. The default is `auto`, which detects it and builds without it when absent. It is optional and unrelated to the sign-in window — install `sso-mib-devel` only if you use a local identity broker.
 
 **The application shows a generic icon.**
 Run `./scripts/diagnose-icon.sh`, which checks each step of the lookup chain.
@@ -264,17 +301,20 @@ Note that on Wayland there is no per-window icon: the compositor matches the win
 **Preflight reports a library as missing that you know is installed.**
 pkg-config file names differ between distributions. Find the real name with `pkg-config --list-all | grep -i <library>`, then either re-run with `SKIP_PREFLIGHT=1` or open an issue with the name so it can be added to the list.
 
-**`/usr/bin/python3: No module named pip`.**
-Some distributions do not install pip with Python. `install.sh` installs both for you; to do it by hand: `sudo dnf install python3-pip python3-pyqt6`.
+**`entrardp` fails with `No module named 'entrardp'` after an OS upgrade.**
+An install made by an older `install.sh`, which used `pip install --user` and so lived under one Python version's `site-packages`. A distribution upgrade to a newer Python (Fedora 44 → 45 went from 3.14 to 3.15) leaves the launcher behind and the app out of reach. Re-run `./scripts/install.sh`; current versions install independently of the Python version and remove the old copy.
 
-**`error: externally-managed-environment`.**
-The system Python is marked externally managed (PEP 668). `install.sh` retries automatically with `--break-system-packages`, which only affects `~/.local`, never system packages.
+**The app reports "This build cannot start" after an OS upgrade.**
+A FreeRDP you compiled is linked against the libraries that were current when you built it. An upgrade replaces some of them — Fedora 45 moved OpenSSL, FFmpeg and ICU to new versions — and the loader then refuses to start the client. The app detects this, disables Connect, and switches to another binary that works if there is one. Re-run `./scripts/install.sh`: if the distribution's FreeRDP can sign in, that is used and nothing is compiled; otherwise it rebuilds. Remove the stale build with `rm -rf ~/.local/share/entrardp/freerdp` or `sudo dnf remove freerdp-nightly` once you no longer need it.
 
-**The app finds `/usr/bin/sdl-freerdp` and warns about WebView.**
-Expected before you have run `build-freerdp.sh`. Binaries are deliberately never taken from a CMake build directory, per upstream guidance, so a build tree at `~/FreeRDP/build/...` will not be detected. Either run `./scripts/build-freerdp.sh` to install into the private prefix, or use **Browse** to select a binary explicitly.
+**`/usr/bin/sdl-freerdp` is reported as having no sign-in window.**
+Your distribution's package predates 3.32 or was built without a sign-in helper. Run `./scripts/install.sh`, which builds one only in that case, or use **Browse** to select another binary. Binaries are deliberately never taken from a CMake build directory, per upstream guidance, so a build tree at `~/FreeRDP/build/...` will not be detected.
 
-**Sign-in prints a URL instead of opening a browser window.**
-Your FreeRDP binary lacks webview support. The *FreeRDP binary* section will say so in orange. Either run `./scripts/build-freerdp.sh`, or browse to a build made with `WITH_WEBVIEW=ON`.
+**Sign-in prints a URL instead of opening a browser or window.**
+The binary has no usable sign-in helper. The *FreeRDP binary* section says so in orange, and names any helper that was configured but whose program is missing from `libexec`.
+
+**The browser opens for sign-in, but the session never continues.**
+The browser helper gets the result back through a `ms-appx-web://` URL handler that FreeRDP registers in `~/.local/share/applications` on first use. If your browser asks whether to open the link, allow it. If nothing happens, check that `xdg-open` and `xdg-mime` are installed (`xdg-utils`), or pick an embedded window under *Sign-in method* if your binary has one.
 
 **`Cannot find KDC for realm`.**
 `/sec:aad` is missing. The app always sets it, so this points at a stale profile or something in *Extra flags* overriding it.
@@ -300,11 +340,11 @@ sudo rpm -Uvh --force ~/rpmbuild/RPMS/x86_64/freerdp-nightly-*.rpm
 **Horizontal line artifacts on Wayland with smart sizing.**
 A FreeRDP SDL3 rendering bug ([FreeRDP#13204](https://github.com/FreeRDP/FreeRDP/issues/13204)), fixed upstream in 3.31.0. If you see it, your binary predates the fix — rebuild, or use a fixed resolution with fullscreen until you do.
 
-**The sign-in window never appears on Wayland.**
-Leave *Force X11 video driver* enabled. The webview popup does not map reliably on native Wayland.
+**The embedded sign-in window never appears on Wayland.**
+Leave *Force X11 video driver* enabled. An embedded sign-in window does not map reliably on native Wayland.
 
-**The sign-in webview crashes, or the window appears and vanishes.**
-Tick *Disable WebKit compositing* (`WEBKIT_DISABLE_COMPOSITING_MODE=1`). WebKitGTK's accelerated compositing is unreliable on some GPU and driver combinations, and the webview is the only part of the client that uses it.
+**The embedded sign-in window crashes, or appears and vanishes.**
+For the WebKitGTK window, tick *Disable WebKit compositing* (`WEBKIT_DISABLE_COMPOSITING_MODE=1`); its accelerated compositing is unreliable on some GPU and driver combinations. For the Qt WebEngine window, add `QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu` under custom variables. Or choose *Default web browser* under *Sign-in method*.
 
 **Host does not resolve.**
 The app warns before connecting. Entra-joined machines often aren't in corporate DNS; add an `/etc/hosts` entry. Not applicable when connecting through an AVD workspace file, which carries its own host and is not resolved locally.
@@ -322,20 +362,22 @@ The session host in a workspace file is only reachable through the ARM gateway. 
 ```
 src/entrardp/
     config.py     Flag definitions, input sanitizing, profile storage
-    freerdp.py    Binary discovery, webview detection, command assembly
+    freerdp.py    Binary discovery, sign-in detection, command assembly;
+                  also runnable as `python3 -m entrardp.freerdp`
     gui.py        PyQt6 interface
 scripts/
-    install.sh            Entry point: builds FreeRDP, installs the GUI,
+    install.sh            Entry point: builds FreeRDP only if nothing
+                          installed can sign in, installs the GUI,
                           registers the desktop entry
     build-freerdp-rpm.sh  Builds an RPM via upstream's own packaging
-                          (used automatically on RPM systems)
-    build-freerdp.sh      Compiles to a private prefix; used elsewhere,
-                          and preferred by the app when both are present
-    freerdp-common.sh     Sourced by the three above: reporting helpers and
-                          release-tag resolution, so both build routes agree
-                          on which version they produce
+                          (used automatically with dnf)
+    build-freerdp.sh      Compiles to a private prefix; used elsewhere
+    freerdp-common.sh     Sourced by the three above: reporting, release-tag
+                          resolution, and which sign-in flags a source tree
+                          needs, so both build routes produce the same thing
     diagnose-icon.sh      Reports why the application icon may not appear
-tests/                 Command assembly, input sanitizing, profile storage
+tests/                 Command assembly, sign-in detection, input
+                       sanitizing, profile storage
 data/                  Desktop entry, AppStream metainfo, icon
 ```
 
@@ -362,9 +404,9 @@ wrapper script. Useful if you would rather understand each step than run a scrip
 
 ## Keeping it updated
 
-This is the real tradeoff of building your own FreeRDP, and it deserves to be stated plainly.
+If `install.sh` found your distribution's FreeRDP good enough, there is nothing to do here: it updates with the rest of the system. This section is for builds made by this project.
 
-Your distribution's package receives security updates through `dnf update`. A binary you built yourself does not — **you own that**. FreeRDP releases often, and individual releases have carried substantial batches of security fixes, with upstream telling distributors to update as soon as possible. What is currently outstanding is published in the [FreeRDP repository](https://github.com/FreeRDP/FreeRDP) — see its [security advisories](https://github.com/FreeRDP/FreeRDP/security/advisories) and [releases](https://github.com/FreeRDP/FreeRDP/releases).
+That is the real tradeoff of building your own FreeRDP, and it deserves to be stated plainly. Your distribution's package receives security updates through `dnf update`. A binary you built yourself does not — **you own that**. It can also stop starting altogether after an OS upgrade, which the app will report. FreeRDP releases often, and individual releases have carried substantial batches of security fixes, with upstream telling distributors to update as soon as possible. What is currently outstanding is published in the [FreeRDP repository](https://github.com/FreeRDP/FreeRDP) — see its [security advisories](https://github.com/FreeRDP/FreeRDP/security/advisories) and [releases](https://github.com/FreeRDP/FreeRDP/releases).
 
 The build scripts therefore resolve the **newest release tag** at build time rather than defaulting to a branch. FreeRDP tags releases directly, so this always produces a real release without hardcoding a version that goes stale:
 
@@ -380,7 +422,7 @@ FREERDP_BRANCH=<release-tag> ./scripts/build-freerdp-rpm.sh
 FREERDP_BRANCH=master ./scripts/build-freerdp-rpm.sh
 ```
 
-A pinned ref is taken at face value and built as asked. Only automatic resolution enforces the 3.16.0 floor where webview support landed, so pinning something older produces a working client that simply cannot do webview sign-in — which the app then reports in its *FreeRDP binary* section.
+A pinned ref is taken at face value and built as asked. Only automatic resolution enforces the 3.16.0 floor below which no sign-in window exists, so pinning something older produces a working client that cannot open one — which the app then reports in its *FreeRDP binary* section.
 
 ### Staying on top of it
 
@@ -397,9 +439,9 @@ Realistically this means rebuilding a handful of times a year — not tracking e
 
 ## Upstream direction
 
-FreeRDP maintainers have indicated that browser-based authentication may eventually move out of the client process entirely, into an external helper communicating over IPC — the approach already used by `SSO_MIB` ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+FreeRDP maintainers indicated that browser sign-in would move out of the client process into an external helper communicating over IPC ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)). That landed in **3.32.0**: `WITH_WEBVIEW` is gone, replaced by helper programs speaking a documented protocol (`client/common/aad-helper-protocol.md` upstream), chosen with `/azure:auth-helper`.
 
-If that lands, `WITH_WEBVIEW` as a compile-time flag becomes less central, and this project's build scripts may be unnecessary. The GUI itself is unaffected: it probes whatever binary it is pointed at and reports what that binary supports, rather than assuming a particular mechanism.
+The practical effect is that distributions can now ship working Entra sign-in, and Fedora 45 does. The build scripts here have become a fallback for distributions that do not yet, and for anyone who wants the embedded window rather than the browser. The GUI's job is unchanged: probe whatever binary it is pointed at and report what that binary actually supports.
 
 ## Credits
 
@@ -407,4 +449,4 @@ Built on [FreeRDP](https://github.com/FreeRDP/FreeRDP). The build recipe origina
 
 ## License
 
-Apache-2.0, matching FreeRDP.
+[The Unlicense](LICENSE): public domain, no conditions. FreeRDP itself, which this app runs but does not include, is Apache-2.0.

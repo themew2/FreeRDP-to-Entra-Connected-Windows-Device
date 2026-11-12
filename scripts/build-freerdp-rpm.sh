@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 #
-# Builds an RPM of FreeRDP with WITH_WEBVIEW=ON using upstream's own packaging.
+# Builds an RPM of FreeRDP with Entra sign-in windows enabled, using upstream's
+# own packaging.
 #
 # This is the route recommended by the FreeRDP maintainers for RPM-based
 # distributions (FreeRDP#13237): modify packaging/rpm/freerdp-nightly.spec to
-# enable webview, then build with packaging/scripts/create_rpm.sh.
+# enable sign-in, then build with packaging/scripts/create_rpm.sh. On FreeRDP
+# 3.32+ that means the browser and embedded-window sign-in helpers; before
+# that, WITH_WEBVIEW. Only needed when the distribution's own FreeRDP has no
+# sign-in helper, which install.sh checks first.
 #
 # Preferred over scripts/build-freerdp.sh where it works, because:
 #   - dnf owns the result, so `dnf remove freerdp-nightly` cleanly uninstalls
@@ -30,7 +34,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/freerdp-common.sh
-source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version
+source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version, sign-in flags
 
 SRC="${ENTRARDP_RPM_SRC:-$HOME/.cache/entrardp/FreeRDP-rpm}"
 # Set by resolve_version(): the newest release tag, or FREERDP_BRANCH if set.
@@ -71,21 +75,62 @@ CREATE="$SRC/packaging/scripts/create_rpm.sh"
 
 # ----------------------------------------------------------------- patch spec
 
-# The spec already declares the webkit BuildRequires for Fedora and RHEL:
-#   BuildRequires: (webkitgtk6.0-devel or webkit2gtk4.1-devel or webkit2gtk4.0-devel)
-# so enabling the feature is a single-line change.
-# The cmake arguments are indented inside the %build section, so anchor on
-# optional leading whitespace rather than the start of the line. Using -- and
-# no backslash before the hyphen: escaping it makes GNU grep warn about a
-# stray backslash, and the leading [[:space:]]* already prevents the pattern
-# being read as an option.
-if grep -qE '^[[:space:]]*-DWITH_WEBVIEW=OFF' "$SPEC"; then
-    info "Enabling WITH_WEBVIEW in the spec"
-    sed -i -E 's/^([[:space:]]*)-DWITH_WEBVIEW=OFF/\1-DWITH_WEBVIEW=ON/' "$SPEC"
-elif grep -qE '^[[:space:]]*-DWITH_WEBVIEW=ON' "$SPEC"; then
-    info "Spec already has WITH_WEBVIEW=ON"
+# Sets a cmake option in the spec's %build arguments.
+#
+# The arguments are indented continuation lines, so matches anchor on optional
+# leading whitespace rather than the start of the line, and a hyphen is never
+# escaped: GNU grep warns about the stray backslash, and the leading
+# [[:space:]]* already stops the pattern being read as an option.
+#
+# An existing -D$1=... line is rewritten in place. A missing one is added
+# after the line named by $ANCHOR, reusing that line's own trailing
+# continuation through the second capture group. That keeps a literal
+# backslash out of this script, which avoids shellcheck SC1003 and sidesteps
+# sed eating a trailing backslash in an append block.
+spec_set() {
+    local name=$1 value=$2
+    if grep -qE "^[[:space:]]*-D${name}=" "$SPEC"; then
+        sed -i -E "s/^([[:space:]]*)-D${name}=[A-Za-z0-9]+/\\1-D${name}=${value}/" "$SPEC"
+    elif grep -qE "^[[:space:]]*${ANCHOR}[[:space:]]+.\$" "$SPEC"; then
+        sed -i -E "s|^([[:space:]]*)${ANCHOR}(.*)\$|\\1${ANCHOR}\\2\\n\\1-D${name}=${value}\\2|" "$SPEC"
+    else
+        # Only reachable if the anchor ends the argument list. Appending
+        # there would orphan the new line outside the cmake invocation.
+        warn "Could not place -D${name}=${value} in the spec; set it by hand in $SPEC."
+        return 1
+    fi
+}
+
+# Which sign-in mechanism this tree has decides what to switch on. The spec
+# may still carry -DWITH_WEBVIEW=OFF on 3.32+ trees, where that option no
+# longer exists: rewriting it to ON would succeed and change nothing, which
+# is how a build silently ends up with no sign-in window at all.
+resolve_signin_flags "$SRC"
+if [[ ${#SIGNIN_HELPERS[@]} -gt 0 ]]; then
+    # The dead WITH_WEBVIEW line becomes the embedded helper, so it can
+    # serve as the anchor for everything added below.
+    if grep -qE '^[[:space:]]*-DWITH_WEBVIEW=' "$SPEC"; then
+        sed -i -E 's/^([[:space:]]*)-DWITH_WEBVIEW=[A-Za-z0-9]+/\1-DWITH_WEBVIEW_AAD_AUTH_HELPER=ON/' "$SPEC"
+    fi
+    ANCHOR='-DWITH_WEBVIEW_AAD_AUTH_HELPER=ON'
+    grep -qE "^[[:space:]]*${ANCHOR}" "$SPEC" \
+        || ANCHOR='-DWITH_XDG_AAD_AUTH_HELPER=ON'
+    grep -qE "^[[:space:]]*-DWITH_(WEBVIEW|XDG)_AAD_AUTH_HELPER=" "$SPEC" \
+        || die "No sign-in option found in the spec to anchor on. Inspect $SPEC and set it by hand."
+    info "Enabling the browser and embedded-window sign-in helpers in the spec"
+    spec_set WITH_XDG_AAD_AUTH_HELPER ON || die "Could not enable the browser sign-in helper."
+    spec_set WITH_WEBVIEW_AAD_AUTH_HELPER ON || die "Could not enable the embedded sign-in helper."
 else
-    die "No WITH_WEBVIEW line found in the spec. Inspect $SPEC and set it by hand."
+    # FreeRDP before 3.32: the in-process webview, a single-line change.
+    if grep -qE '^[[:space:]]*-DWITH_WEBVIEW=OFF' "$SPEC"; then
+        info "Enabling WITH_WEBVIEW in the spec"
+        sed -i -E 's/^([[:space:]]*)-DWITH_WEBVIEW=OFF/\1-DWITH_WEBVIEW=ON/' "$SPEC"
+    elif grep -qE '^[[:space:]]*-DWITH_WEBVIEW=ON' "$SPEC"; then
+        info "Spec already has WITH_WEBVIEW=ON"
+    else
+        die "No WITH_WEBVIEW line found in the spec. Inspect $SPEC and set it by hand."
+    fi
+    ANCHOR='-DWITH_WEBVIEW=ON'
 fi
 
 if [[ "$RELEASE_BUILD" == "1" ]]; then
@@ -112,22 +157,11 @@ if [[ "$RELEASE_BUILD" == "1" ]]; then
     # a deadline is audible. VAAPI H264 encoding is encode-only and unused by
     # a client, so disabling it costs nothing.
     #
-    # Neither appears in the spec, so there is nothing to match in place. The
-    # webview line is rewritten into three lines instead, reusing its own
-    # trailing continuation through the second capture group. That keeps a
-    # literal backslash out of this script, which avoids shellcheck SC1003 and
-    # sidesteps sed eating a trailing backslash in an append block.
-    if grep -qE '^[[:space:]]*-DWITH_VERBOSE_WINPR_ASSERT' "$SPEC"; then
-        info "Spec already sets WITH_VERBOSE_WINPR_ASSERT"
-    elif grep -qE '^[[:space:]]*-DWITH_WEBVIEW=ON[[:space:]]+.$' "$SPEC"; then
-        sed -i -E 's|^([[:space:]]*)-DWITH_WEBVIEW=ON(.*)$|\1-DWITH_WEBVIEW=ON\2\n\1-DWITH_VERBOSE_WINPR_ASSERT=OFF\2\n\1-DWITH_VAAPI_H264_ENCODING=OFF\2|' "$SPEC"
-    else
-        # Only reachable if upstream moves webview to the end of the argument
-        # list. Appending there would orphan the new lines outside the cmake
-        # invocation, so leave the spec alone and say so.
-        warn "WITH_WEBVIEW line carries no continuation; leaving debug flags at"
-        warn "their upstream defaults. Set them by hand in $SPEC if needed."
-    fi
+    # Neither appears in the spec today, so spec_set adds them after the
+    # sign-in line; if either ever does, it is rewritten in place instead.
+    # A failure here leaves a slower client, not a broken one, so it warns.
+    spec_set WITH_VERBOSE_WINPR_ASSERT OFF || true
+    spec_set WITH_VAAPI_H264_ENCODING OFF || true
 else
     warn "RELEASE_BUILD=0: building upstream's nightly test configuration."
     warn "Expect reduced performance and degraded audio. Use this only when"
@@ -138,7 +172,7 @@ info "Resulting build flags:"
 # `|| true` because this only reports state. grep exits 1 when it matches
 # nothing, and under `set -euo pipefail` that would abort the build from a
 # line whose only job is to print a summary.
-grep -E '^[[:space:]]*-D(WITH_WEBVIEW|CMAKE_BUILD_TYPE|WITH_SANITIZE_ADDRESS|WITH_VERBOSE_WINPR_ASSERT|WITH_VAAPI_H264_ENCODING)' "$SPEC" || true
+grep -E '^[[:space:]]*-D(WITH_WEBVIEW|WITH_[A-Z]+_AAD_AUTH_HELPER|CMAKE_BUILD_TYPE|WITH_SANITIZE_ADDRESS|WITH_VERBOSE_WINPR_ASSERT|WITH_VAAPI_H264_ENCODING)' "$SPEC" || true
 
 # ---------------------------------------------------------------- build rpm
 
@@ -219,8 +253,19 @@ printf '    %s\n' "${RPMS[@]}"
 # -------------------------------------------------------------------- install
 
 if [[ "$AUTO_INSTALL" == "1" ]]; then
-    info "Installing"
-    sudo dnf install -y "${RPMS[@]}"
+    # The spec hardcodes version 3.0-0, so every rebuild has the same
+    # name, version and release. `dnf install` treats that as already
+    # installed and does nothing, leaving the previous binary in place
+    # while reporting success. Rebuilding after an OS upgrade or for a
+    # security release is the whole reason to run this again, so an
+    # existing install is replaced explicitly.
+    if rpm -q freerdp-nightly >/dev/null 2>&1; then
+        info "Replacing the installed freerdp-nightly"
+        sudo dnf reinstall -y "${RPMS[@]}"
+    else
+        info "Installing"
+        sudo dnf install -y "${RPMS[@]}"
+    fi
 
     # The nightly spec sets WITH_CLIENT_SDL_VERSIONED=ON, so the SDL client
     # installs as sdl-freerdp3 rather than sdl-freerdp. Distribution packages
@@ -235,20 +280,7 @@ if [[ "$AUTO_INSTALL" == "1" ]]; then
     done
 
     if [[ -n "$BIN" ]]; then
-        # Captured with command substitution rather than piped into grep -q.
-        # Under `set -o pipefail`, grep -q exits on the first match and closes
-        # the pipe; the upstream command takes SIGPIPE writing the rest of its
-        # output and the pipeline reports 141, turning a good build into an
-        # apparent failure. /buildconfig output is long enough that this is the
-        # likely case rather than the edge case.
-        #
-        # `|| true` because /buildconfig is not guaranteed to exit 0.
-        local_cfg="$("$BIN" /buildconfig 2>&1 || true)"
-        if grep -qi '^WITH_WEBVIEW=ON$' <<<"$(tr ' ' '\n' <<<"$local_cfg")"; then
-            info "Verified: WITH_WEBVIEW=ON"
-        else
-            warn "Installed, but could not confirm webview support."
-        fi
+        report_signin "$BIN" || true
         info "Binary ready at $BIN"
     else
         warn "No SDL client found under /opt/freerdp-nightly/bin."
