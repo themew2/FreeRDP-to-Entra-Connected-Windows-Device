@@ -81,8 +81,9 @@ If this project built a FreeRDP for you, remove that too:
 
 ```bash
 rm -rf ~/.local/share/entrardp
-sudo dnf remove freerdp-nightly        # only if an older version built the RPM
 ```
+
+Versions before 0.2.0 could instead build a `freerdp-nightly` RPM in `/opt/freerdp-nightly`. The app no longer uses it; remove it with `sudo dnf remove freerdp-nightly`.
 
 ---
 
@@ -220,12 +221,6 @@ The binary has no usable sign-in helper. The *Advanced* tab says so in orange, a
 **The browser opens for sign-in, but the session never continues.**
 The browser helper gets the result back through an `ms-appx-web://` link handler that FreeRDP registers in `~/.local/share/applications` the first time it runs. If your browser asks whether to open the link, allow it. If nothing happens, check that `xdg-open` and `xdg-mime` are installed (`xdg-utils`), or choose an embedded window under *Sign-in method* if your binary has one.
 
-**`Cannot find KDC for realm`.**
-`/sec:aad` is missing. The app always adds it, so this points at something in *Extra flags* overriding it.
-
-**Command line parsing failed at 'azure'.**
-A quote character got pasted into a field. The app removes these automatically. If you still see this, check *Extra flags*.
-
 **Host does not resolve.**
 The app warns before connecting. Entra-joined machines often aren't in corporate DNS, so add an `/etc/hosts` entry. This check is skipped when you connect through an AVD workspace file.
 
@@ -247,7 +242,7 @@ For the WebKitGTK window, tick *Disable WebKit compositing*. For the Qt WebEngin
 You have an install from an older `install.sh`, which tied the app to one Python version. Fedora 44 → 45 moved from Python 3.14 to 3.15 and left it behind. Run `./scripts/install.sh` again. Current versions don't depend on the Python version, and the installer removes the old copy.
 
 **The app reports "This build cannot start".**
-A FreeRDP you compiled yourself is linked against the libraries that were current when you built it. An upgrade replaces some of them (Fedora 45 moved OpenSSL, FFmpeg and ICU to new versions), and the build no longer starts. The app disables Connect and switches to a working binary if there is one. Run `./scripts/install.sh` again: it uses your distribution's FreeRDP if that can sign in, and rebuilds otherwise. Once you no longer need the old build, remove it with `rm -rf ~/.local/share/entrardp/freerdp`, or `sudo dnf remove freerdp-nightly` if an older version of the installer built it as an RPM. The app no longer looks in `/opt/freerdp-nightly`.
+A FreeRDP you compiled yourself is linked against the libraries that were current when you built it. An upgrade replaces some of them (Fedora 45 moved OpenSSL, FFmpeg and ICU to new versions), and the build no longer starts. The app disables Connect and switches to a working binary if there is one. Run `./scripts/install.sh` again: it uses your distribution's FreeRDP if that can sign in, and rebuilds otherwise. Once you no longer need the old build, remove it with `rm -rf ~/.local/share/entrardp/freerdp`.
 
 ### The app itself
 
@@ -308,14 +303,12 @@ The build script chooses the build options from the FreeRDP source itself. A 3.3
 
 Compiles FreeRDP into `~/.local/share/entrardp/freerdp`, a private location that doesn't clash with your distribution's package.
 
-Earlier versions built an RPM from upstream's `freerdp-nightly.spec` on dnf systems. That route has been removed. If you still have it, `sudo dnf remove freerdp-nightly` takes it away.
-
 | Step | What happens |
 |---|---|
 | Dependencies | Detects `dnf`, `apt` or `pacman`, and installs compilers and libraries |
 | Preflight | Checks every requirement with `pkg-config` and lists *all* missing ones at once |
 | Version | Looks up the newest `3.x.y` release, and refuses anything older than 3.16.0 |
-| Configure | Starts from scratch each time, with the sign-in options for this source, Entra and PulseAudio support, and `WITH_SSO_MIB` if available |
+| Configure | Starts from scratch each time, with the sign-in options for this source, Entra and PulseAudio support, and `WITH_SSO_MIB` if available. Release build, with FreeRDP's verbose assertions and experimental VAAPI encoding turned off. With the assertions on, microphone audio in Teams calls was audibly scratchy |
 | Check | Stops unless each sign-in helper was actually set up to be built |
 | Build and install | `cmake --build`, then `--target install` |
 | Verify | Confirms the helpers were installed next to the client |
@@ -367,15 +360,6 @@ You set `WITH_SSO_MIB=ON` without the library installed. The default, `auto`, bu
 **Preflight reports a library as missing that you know is installed.**
 `pkg-config` names differ between distributions. Find the real name with `pkg-config --list-all | grep -i <library>`, then re-run with `SKIP_PREFLIGHT=1`, or open an issue so the name can be added.
 
-**Scratchy microphone audio in Teams, but fine locally.**
-Check whether your build has debug settings turned on:
-
-```bash
-<path-to-binary> /buildconfig | tr ' ' '\n' | grep -iE 'VERBOSE_WINPR|VAAPI_H264'
-```
-
-If `WITH_VERBOSE_WINPR_ASSERT=ON`, it's probably the old `freerdp-nightly` RPM, which left it on. Remove it with `sudo dnf remove freerdp-nightly` and use your distribution's FreeRDP or `./scripts/build-freerdp.sh` instead.
-
 ---
 
 ## Development
@@ -410,7 +394,7 @@ The tests need neither a display nor FreeRDP:
 pip install . pytest ruff
 pytest tests/
 ruff check src/ tests/
-shellcheck scripts/*.sh docs/*.sh
+shellcheck scripts/*.sh
 ```
 
 CI runs these on every pull request, plus `desktop-file-validate` and `appstreamcli` on the desktop metadata.
@@ -421,7 +405,7 @@ This project began as a build guide. Until FreeRDP 3.32, distributions shipped F
 
 FreeRDP's maintainers then moved sign-in out of the client into separate helper programs ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)). That landed in **3.32.0**, and distributions can now ship working Entra sign-in. After a request from this project ([rhbz#2520877](https://bugzilla.redhat.com/show_bug.cgi?id=2520877)), Fedora enabled the browser sign-in helper in its `freerdp` package: in Fedora 45, and as an update for Fedora 43 and 44. The embedded sign-in window is still not packaged, because it depends on a library fork that upstream hasn't merged. Building is now a fallback, and the app is the main part of this project.
 
-The original walkthrough, for FreeRDP 3.16–3.31, is kept at [docs/BUILD-GUIDE.md](docs/BUILD-GUIDE.md) along with the original `rdp-aad.sh` wrapper script.
+The project as it was before this change, including the original walkthrough for FreeRDP 3.16–3.31 and the `rdp-aad.sh` wrapper script, is archived as tag [`v0.1.2`](https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/tree/v0.1.2) and branch [`archive/v0.1`](https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/tree/archive/v0.1).
 
 ## Credits
 
