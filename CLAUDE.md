@@ -17,11 +17,11 @@ A PyQt6 front end for FreeRDP that connects to Microsoft Entra ID joined Windows
 - **No nightly/RPM build route.** `build-freerdp-rpm.sh` (upstream's `freerdp-nightly.spec`, installed to `/opt/freerdp-nightly`) was removed on 2026-11-12, and the app no longer looks in `/opt/freerdp-nightly`. The only build is `build-freerdp.sh`, into `~/.local/share/entrardp/freerdp`.
 - The license is **the Unlicense** everywhere: `LICENSE`, `pyproject.toml`, the metainfo, and the README.
 - The settings UI uses three tabs: Connection, Settings, Advanced.
-- The README presents the app first. Building FreeRDP is a fallback section, and the old guide is kept as history in `docs/BUILD-GUIDE.md`.
+- The README presents the app first. Building FreeRDP is a fallback section. The old guide and `rdp-aad.sh` were removed from `main`; they live in the `v0.1.2` tag and `archive/v0.1` branch.
 
 ## Working on this repo
 
-- Tests: `pytest tests/` (no display or FreeRDP needed), `ruff check src/ tests/`, `shellcheck scripts/*.sh docs/*.sh`. CI runs these on pull requests, plus `appstreamcli validate` and `desktop-file-validate`. CI does **not** run `ruff format`. Several files predate it, so don't reformat unrelated code.
+- Tests: `pytest tests/` (no display or FreeRDP needed), `ruff check src/ tests/`, `shellcheck scripts/*.sh`. CI runs these on pull requests, plus `appstreamcli validate` and `desktop-file-validate`. CI does **not** run `ruff format`. Several files predate it, so don't reformat unrelated code.
 - Run the app from a checkout: `PYTHONPATH=src python3 -m entrardp`. The installed copy in `~/.local/share/entrardp/app` only changes when `scripts/install.sh` is run again.
 - Check what a FreeRDP binary can do: `PYTHONPATH=src python3 -m entrardp.freerdp [binary...]`. Exits 0 if any binary can sign in.
 - If the shell is VS Code's Flatpak sandbox (no `rpm`, a different `python3`), run host commands through `flatpak-spawn --host bash -lc '...'`. The sandbox's `/tmp` isn't visible to the host.
@@ -54,5 +54,4 @@ The previous `main` is archived as tag `v0.1.2` and branch `archive/v0.1` (the `
 **Still open:**
 
 - `install.sh` prints the FreeRDP list twice when an installed build already signs in: `existing_freerdp_signs_in` runs once in the `if !` and again in the `if ... ||` that follows.
-- Update the GitHub repository description, which still describes the old build-focused purpose. Suggested wording: "Desktop app for connecting to Entra ID joined Windows machines and Azure Virtual Desktop from Linux with FreeRDP and web sign-in". This only changes with the user's approval.
 - Not started, offered to the user: clearer messages when sign-in fails, and support for extra flags containing spaces. Patches to FreeRDP itself were also offered (the toolbar font, and dialogs covering the browser).

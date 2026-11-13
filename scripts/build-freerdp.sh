@@ -340,7 +340,13 @@ configure_and_build() {
         -DWITH_WAYLAND=ON \
         -DWITH_FFMPEG=ON \
         -DWITH_CUPS=ON \
-        -DBUILD_TESTING=OFF
+        -DBUILD_TESTING=OFF \
+        -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+        -DWITH_VAAPI_H264_ENCODING=OFF
+    # Both of those default ON upstream and survive a Release build. Verbose
+    # asserts run on hot paths including audio capture, and left on they made
+    # microphone audio in Teams calls audibly scratchy. VAAPI H264 encoding is
+    # experimental and encode-only, so a client never needs it.
 
     # cmake silently ignores a -D it never defines, so a build can succeed
     # with the feature missing. Fail before the long compile instead.
