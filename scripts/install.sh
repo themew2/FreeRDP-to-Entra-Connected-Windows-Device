@@ -3,9 +3,9 @@
 # Installer: makes sure a FreeRDP that can sign in to Entra is available,
 # installs the GUI, and registers the desktop entry.
 #
-# FreeRDP is only compiled when nothing installed can sign in already. Fedora
-# 45's own package can, through upstream's browser sign-in helper. When a
-# build is needed it goes through upstream's RPM packaging on dnf systems and
+# FreeRDP is only compiled when nothing installed can sign in already, and
+# the distribution's own package is tried first: Fedora 45's can, through
+# upstream's browser sign-in helper. When a build is needed it goes through upstream's RPM packaging on dnf systems and
 # from source otherwise. SKIP_FREERDP=1 never builds; FORCE_FREERDP_BUILD=1
 # always does, which is how to get the embedded sign-in window on a system
 # whose package only offers the browser.
@@ -91,6 +91,49 @@ existing_freerdp_signs_in() {
     PYTHONPATH="$HERE/src" python3 -m entrardp.freerdp
 }
 
+# Install or update the distribution's FreeRDP. Only called when nothing
+# installed can sign in, so a working setup never triggers a sudo prompt.
+# Updating matters as much as installing: Fedora 44 shipped 3.24, which has
+# no sign-in helper, and later updated to 3.32. Package names differ: Debian
+# and Ubuntu split the clients, Fedora and Arch ship them together. Only dnf
+# has been exercised. Failure is not fatal; the caller probes again and
+# builds if still needed.
+install_distro_freerdp() {
+    if command -v dnf >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        if rpm -q freerdp >/dev/null 2>&1; then
+            sudo dnf upgrade -y freerdp || warn "Could not update freerdp"
+        else
+            sudo dnf install -y freerdp || warn "Could not install freerdp"
+        fi
+    elif command -v apt-get >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        if ! { sudo apt-get update && sudo apt-get install -y freerdp3-sdl freerdp3-x11; }; then
+            warn "Could not install freerdp3-sdl and freerdp3-x11"
+        fi
+    elif command -v pacman >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        sudo pacman -S --needed --noconfirm freerdp || warn "Could not install freerdp"
+    fi
+    return 0
+}
+
+# Fedora 43 and 44 received the browser sign-in helper as an update
+# (rhbz#2520877), which spends time in updates-testing before reaching
+# stable. Taking just freerdp from there beats compiling one: it is still
+# Fedora's package, and the next regular update replaces it. Only when the
+# repository exists, so this does nothing outside Fedora.
+try_fedora_testing_freerdp() {
+    command -v dnf >/dev/null || return 1
+    rpm -q freerdp >/dev/null 2>&1 || return 1
+    dnf repolist --all 2>/dev/null | grep -q '^updates-testing ' || return 1
+    info "Trying freerdp from Fedora's updates-testing repository"
+    sudo dnf upgrade -y --enablerepo=updates-testing freerdp \
+        || { warn "Could not update freerdp from updates-testing"; return 1; }
+    info "Checking installed FreeRDP clients again"
+    existing_freerdp_signs_in
+}
+
 build_freerdp() {
     if [[ "${SKIP_FREERDP:-0}" == "1" ]]; then
         info "SKIP_FREERDP=1, using an existing FreeRDP build"
@@ -99,8 +142,12 @@ build_freerdp() {
 
     if [[ "${FORCE_FREERDP_BUILD:-0}" != "1" ]]; then
         info "Checking installed FreeRDP clients"
-        if existing_freerdp_signs_in; then
-            info "An installed FreeRDP can already sign in to Entra; not compiling."
+        if ! existing_freerdp_signs_in; then
+            install_distro_freerdp
+            info "Checking installed FreeRDP clients again"
+        fi
+        if existing_freerdp_signs_in || try_fedora_testing_freerdp; then
+            info "An installed FreeRDP can sign in to Entra; not compiling."
             info "Set FORCE_FREERDP_BUILD=1 to build one anyway, for example to get"
             info "the embedded sign-in window instead of the default browser."
             return 0

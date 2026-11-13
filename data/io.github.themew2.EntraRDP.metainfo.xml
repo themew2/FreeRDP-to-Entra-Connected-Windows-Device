@@ -54,6 +54,14 @@
       <caption>Configuring a connection profile</caption>
       <image>https://raw.githubusercontent.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/main/data/screenshots/main-window.png</image>
     </screenshot>
+    <screenshot>
+      <caption>Session options and resolution</caption>
+      <image>https://raw.githubusercontent.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/main/data/screenshots/settings-window.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>FreeRDP binary, sign-in method and command preview</caption>
+      <image>https://raw.githubusercontent.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/main/data/screenshots/advanced-settings-window.png</image>
+    </screenshot>
   </screenshots>
 
   <!-- The uppercase letters in the component ID draw a pedantic AppStream
@@ -70,7 +78,8 @@
           <li>Adds a choice of sign-in method when a build offers more than one</li>
           <li>Optional on-screen toolbar in fullscreen, with minimize and close buttons</li>
           <li>Detects builds that cannot start after an OS upgrade and switches to a working one</li>
-          <li>Uses the distribution's FreeRDP when it can sign in, instead of compiling</li>
+          <li>Uses the distribution's FreeRDP when it can sign in, installing it if needed, instead of compiling</li>
+          <li>Settings arranged in Connection, Settings and Advanced tabs</li>
           <li>Installs independently of the Python version, so OS upgrades no longer break it</li>
         </ul>
       </description>

@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,6 +23,8 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QStyle,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -182,6 +185,15 @@ class MainWindow(QWidget):
         prof_row.addWidget(del_btn)
         root.addLayout(prof_row)
 
+        # Everyday fields on the first tab; the rest is set once and left.
+        tabs = QTabWidget()
+        self.tabs = tabs
+        root.addWidget(tabs, 1)
+        conn_page = self._tab(tabs, "Connection")
+        settings_page = self._tab(tabs, "Settings")
+        advanced_page = self._tab(tabs, "Advanced")
+        self._advanced_index = tabs.count() - 1
+
         conn = QGroupBox("Connection")
         form = QFormLayout(conn)
         self.host_in = QLineEdit()
@@ -212,7 +224,7 @@ class MainWindow(QWidget):
         form.addRow("AVD workspace:", ws_row)
         form.addRow("User name:", self.user_in)
         form.addRow("Tenant ID:", self.tenant_in)
-        root.addWidget(conn)
+        conn_page.addWidget(conn)
 
         binbox = QGroupBox("FreeRDP binary")
         binlayout = QVBoxLayout(binbox)
@@ -240,14 +252,12 @@ class MainWindow(QWidget):
         helper_row.addWidget(self.helper_box, 1)
         binlayout.addLayout(helper_row)
         self._fill_helpers(None)
-        self.floatbar_cb = QCheckBox("On-screen toolbar in fullscreen (minimize, close)")
-        self.floatbar_cb.stateChanged.connect(self._refresh)
-        binlayout.addWidget(self.floatbar_cb)
-        self._update_floatbar(None)
-        root.addWidget(binbox)
+        advanced_page.addWidget(binbox)
 
         opts = QGroupBox("Session options")
-        cols = QHBoxLayout(opts)
+        optlayout = QVBoxLayout(opts)
+        cols = QHBoxLayout()
+        optlayout.addLayout(cols)
         left, right = QVBoxLayout(), QVBoxLayout()
         half = (len(TOGGLES) + 1) // 2
         for i, (key, label, flag, default, tip) in enumerate(TOGGLES):
@@ -261,7 +271,11 @@ class MainWindow(QWidget):
         right.addStretch()
         cols.addLayout(left)
         cols.addLayout(right)
-        root.addWidget(opts)
+        self.floatbar_cb = QCheckBox("On-screen toolbar in fullscreen (minimize, close)")
+        self.floatbar_cb.stateChanged.connect(self._refresh)
+        optlayout.addWidget(self.floatbar_cb)
+        self._update_floatbar(None)
+        settings_page.addWidget(opts)
 
         res = QGroupBox("Manual resolution")
         res.setCheckable(True)
@@ -284,7 +298,7 @@ class MainWindow(QWidget):
         res_row.addWidget(QLabel("Height:"))
         res_row.addWidget(self.height_in)
         res_row.addStretch()
-        root.addWidget(res)
+        settings_page.addWidget(res)
 
         envbox = QGroupBox("Environment")
         envlayout = QVBoxLayout(envbox)
@@ -321,7 +335,7 @@ class MainWindow(QWidget):
         envlayout.addWidget(self.no_compositing)
         envlayout.addWidget(QLabel("Custom variables, one KEY=VALUE per line:"))
         envlayout.addWidget(self.env_in)
-        root.addWidget(envbox)
+        advanced_page.addWidget(envbox)
 
         extra_row = QHBoxLayout()
         self.extra_in = QLineEdit()
@@ -329,13 +343,16 @@ class MainWindow(QWidget):
         self.extra_in.textChanged.connect(self._refresh)
         extra_row.addWidget(QLabel("Extra flags:"))
         extra_row.addWidget(self.extra_in, 1)
-        root.addLayout(extra_row)
+        advanced_page.addLayout(extra_row)
 
-        root.addWidget(QLabel("Command preview:"))
+        advanced_page.addWidget(QLabel("Command preview:"))
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMaximumHeight(130)
-        root.addWidget(self.preview)
+        advanced_page.addWidget(self.preview)
+
+        for page in (conn_page, settings_page, advanced_page):
+            page.addStretch()
 
         self.warn_label = QLabel()
         self.warn_label.setWordWrap(True)
@@ -352,6 +369,12 @@ class MainWindow(QWidget):
         act.addWidget(copy_btn)
         act.addWidget(self.connect_btn)
         root.addLayout(act)
+
+    @staticmethod
+    def _tab(tabs: QTabWidget, title: str) -> QVBoxLayout:
+        page = QWidget()
+        tabs.addTab(page, title)
+        return QVBoxLayout(page)
 
     # ------------------------------------------------------------- state
     def _connection(self) -> Connection:
@@ -700,6 +723,12 @@ class MainWindow(QWidget):
         self.signin_label.setText(text)
         self.signin_label.setToolTip(tip)
         self.signin_label.setStyleSheet(STATUS_COLORS.get(kind, ""))
+        # The binary lives on the Advanced tab; flag trouble from any tab.
+        icon = QIcon()
+        if kind in ("warn", "error"):
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        self.tabs.setTabIcon(self._advanced_index, icon)
+        self.tabs.setTabToolTip(self._advanced_index, text if kind in ("warn", "error") else "")
 
     # ------------------------------------------------------------ actions
     def _copy(self):
