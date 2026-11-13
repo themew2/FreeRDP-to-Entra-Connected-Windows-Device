@@ -1,5 +1,7 @@
 # FreeRDP + Entra ID (AAD) Native Webview Auth on Fedora/Nobara
 
+> **Historical: applies to FreeRDP 3.16 – 3.31.** FreeRDP 3.32.0 removed `WITH_WEBVIEW` and moved sign-in into separate helper programs (`WITH_XDG_AAD_AUTH_HELPER`, `WITH_WEBVIEW_AAD_AUTH_HELPER`). On 3.32 or newer, `-DWITH_WEBVIEW=ON` is silently ignored and produces a client with no sign-in window. Distributions now ship the browser helper — Fedora 45 does — so check your package before building anything. The [README](../README.md) and `scripts/install.sh` cover the current approach.
+
 Building FreeRDP with native Entra ID (Azure AD) webview authentication support — the Linux equivalent of Windows' "Use a web account to sign in to the remote computer" checkbox in `mstsc.exe`.
 
 The distro-packaged `freerdp` on most distros ships with the webview feature disabled, so you get a URL printed to the terminal instead of a native popup — requiring manual copy/paste of the redirect URL after signing in through an external browser. This guide covers building FreeRDP with `WITH_WEBVIEW=ON` to get the real, native popup experience, plus a couple of alternative install paths worth knowing about.

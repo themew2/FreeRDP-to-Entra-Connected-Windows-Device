@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
-# Builds FreeRDP with WITH_WEBVIEW=ON and installs it privately for Entra RDP.
+# Builds FreeRDP with Entra sign-in windows enabled and installs it privately
+# for Entra RDP.
 #
-# Distro packages typically enable WITH_AAD, WITH_PULSE and WITH_SSO_MIB but
-# leave WITH_WEBVIEW=OFF, which downgrades Entra sign-in to a copy-a-URL flow.
-# FreeRDP fetches its webview helper via CMake FetchContent, which most
-# packaging policies forbid, so a source build is the practical way to get it.
+# On FreeRDP 3.32 and newer that means both out-of-process sign-in helpers:
+# the default-browser one, and the embedded WebKitGTK window. Older trees get
+# the in-process WITH_WEBVIEW instead; see resolve_signin_flags in
+# freerdp-common.sh. Distribution packages that ship any helper at all make
+# this script unnecessary, and install.sh checks for that before calling it.
 # Requires FreeRDP 3.16.0 or newer.
 #
 # Installs to ~/.local/share/entrardp/freerdp — a private prefix, so it will
@@ -15,7 +17,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/freerdp-common.sh
-source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version
+source "$HERE/freerdp-common.sh"   # info/warn/die, resolve_version, sign-in flags
 
 PREFIX="${ENTRARDP_PREFIX:-$HOME/.local/share/entrardp/freerdp}"
 SRC="${ENTRARDP_SRC:-$HOME/.cache/entrardp/FreeRDP}"
@@ -129,7 +131,7 @@ install_deps() {
         warn ""
         warn "Install development packages providing these pkg-config modules,"
         warn "then re-run with SKIP_DEPS=1:"
-        warn "  webkitgtk-6.0   (or webkit2gtk-4.1)   <- required for WITH_WEBVIEW"
+        warn "  webkitgtk-6.0   (or webkit2gtk-4.1)   <- for the embedded sign-in window"
         warn "  sdl3, sdl3-ttf, sdl3-image"
         warn "  openssl, libpulse, krb5, zlib, xkbcommon"
         warn "  jansson (or json-c / cjson)"
@@ -219,7 +221,7 @@ check_deps() {
 
     if [[ -z "$webkit_found" ]]; then
         warn "No WebKitGTK development package found (tried webkitgtk-6.0, webkit2gtk-4.1, webkit2gtk-4.0)."
-        warn "  Without it WITH_WEBVIEW cannot be enabled, which is the entire point of this build."
+        warn "  Without it the embedded sign-in window cannot be built."
         warn "  Fedora: sudo dnf install webkitgtk6.0-devel"
         warn "  Debian/Ubuntu: sudo apt install libwebkitgtk-6.0-dev"
         warn "  Arch: sudo pacman -S webkitgtk-6.0"
@@ -293,25 +295,41 @@ resolve_sso_mib() {
 # and means the value tested is not the one from the configure pass just logged.
 #
 # Reads $build from the calling scope.
+#
+# Only proves the value was *set*. Any type is accepted, because a variable
+# passed with -D before its option() is declared is cached as UNINITIALIZED,
+# and that is also exactly what an option that no longer exists looks like.
+# FreeRDP 3.32 removed WITH_WEBVIEW and this check went on passing. Features
+# with a subdirectory of their own are therefore confirmed with
+# require_subdir below, which checks the feature was actually configured.
 require_cache_on() {
     local var=$1 hint=$2
-    # The type is not always BOOL: a variable passed with -D but never
-    # declared via option() in the top-level CMakeLists is cached as
-    # UNINITIALIZED. WITH_WEBVIEW is declared only under
-    # client/SDL/common/aad, so it lands that way while still taking effect.
     grep -qxE "${var}:[A-Z]+=(ON|1|TRUE|YES)" "$build/CMakeCache.txt" \
         || die "$var did not initialise. $hint"
+}
+
+# Confirms cmake processed a source subdirectory, by the build directory it
+# creates for it. Unlike a cache value, this cannot be satisfied by a flag
+# cmake ignored.
+require_subdir() {
+    local dir=$1 hint=$2
+    [[ -d "$build/$dir" ]] || die "$dir was not configured. $hint"
 }
 
 configure_and_build() {
     local build="$SRC/build"
     resolve_sso_mib
+    resolve_signin_flags "$SRC"
+    # Configured from scratch every time. A cache from before an OS upgrade
+    # records library locations and versions that may no longer exist, and
+    # rebuilding after an upgrade is the most common reason to be here.
+    rm -rf "$build"
     mkdir -p "$build"
     info "Configuring (prefix: $PREFIX)"
     cmake -S "$SRC" -B "$build" -GNinja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DWITH_WEBVIEW=ON \
+        "${SIGNIN_ARGS[@]}" \
         -DWITH_AAD=ON \
         -DWITH_SSO_MIB="$WITH_SSO_MIB" \
         -DWITH_CLIENT_SDL=ON \
@@ -324,13 +342,19 @@ configure_and_build() {
         -DWITH_CUPS=ON \
         -DBUILD_TESTING=OFF
 
-    # Several WITH_* flags only get defined once the subdirectory that owns
-    # them is processed (WITH_WEBVIEW lives under client/SDL/common/aad).
-    # If the guard didn't hold, cmake silently ignores -D and the build
-    # succeeds with the feature missing. Fail before the long compile instead.
-    require_cache_on WITH_CLIENT_SDL "SDL client disabled; WITH_WEBVIEW cannot initialise without it."
-    require_cache_on WITH_WEBVIEW    "WebKitGTK development headers are probably missing."
+    # cmake silently ignores a -D it never defines, so a build can succeed
+    # with the feature missing. Fail before the long compile instead.
+    require_cache_on WITH_CLIENT_SDL "SDL client disabled; sign-in cannot work without it."
     require_cache_on WITH_PULSE      "Install the PulseAudio development headers and re-run."
+    local helper
+    if [[ ${#SIGNIN_HELPERS[@]} -gt 0 ]]; then
+        for helper in "${SIGNIN_HELPERS[@]}"; do
+            require_subdir "client/common/$helper-aad-helper" \
+                "Check the configure output above for why the $helper sign-in helper was skipped."
+        done
+    else
+        require_cache_on WITH_WEBVIEW "WebKitGTK development headers are probably missing."
+    fi
 
     info "Building with $JOBS jobs (this takes a while)"
     cmake --build "$build" -j "$JOBS"
@@ -343,27 +367,7 @@ configure_and_build() {
 verify() {
     local bin="$PREFIX/bin/sdl-freerdp"
     [[ -x "$bin" ]] || die "Expected binary missing at $bin"
-
-    # Captured with command substitution rather than piped into grep, for the
-    # same SIGPIPE reason described above require_cache_on: `cmd | grep -q`
-    # under pipefail reports 141 when grep exits early, which would report a
-    # perfectly good build as unverified. /buildconfig output is long enough
-    # that this is the likely case, not the edge case.
-    #
-    # `|| true` on both: /buildconfig is not guaranteed to exit 0, and ldd
-    # fails on static or non-ELF input.
-    local cfg="" libs=""
-    cfg="$("$bin" /buildconfig 2>&1 || true)"
-    libs="$(ldd "$bin" 2>/dev/null || true)"
-
-    # Whitespace stripped so the match survives "WITH_WEBVIEW = ON" spacing.
-    if [[ "${cfg//[[:space:]]/}" == *"WITH_WEBVIEW=ON"* ]]; then
-        info "Verified: WITH_WEBVIEW=ON"
-    elif [[ "${libs,,}" == *webkit* ]]; then
-        info "Verified: linked against WebKitGTK"
-    else
-        warn "Could not confirm webview support. Sign-in may fall back to the URL flow."
-    fi
+    report_signin "$bin" || true
     info "Binary ready at $bin"
 }
 

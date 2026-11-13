@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 #
-# Installer: builds a webview-enabled FreeRDP, installs the GUI, and registers
-# the desktop entry.
+# Installer: makes sure a FreeRDP that can sign in to Entra is available,
+# installs the GUI, and registers the desktop entry.
 #
-# FreeRDP is built through upstream's RPM packaging where that is available,
-# and from source otherwise. Set SKIP_FREERDP=1 if you already have a build
-# with WITH_WEBVIEW=ON.
+# FreeRDP is only compiled when nothing installed can sign in already, and
+# the distribution's own package is tried first: Fedora 45's can, through
+# upstream's browser sign-in helper. When a build is needed it is compiled
+# from source into a private prefix. SKIP_FREERDP=1 never builds; FORCE_FREERDP_BUILD=1
+# always does, which is how to get the embedded sign-in window on a system
+# whose package only offers the browser.
 
 set -euo pipefail
-# The repository root, not the script directory: pip installs from it and the
+# The repository root, not the script directory: the app is copied from it and the
 # build scripts are addressed relative to it.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/freerdp-common.sh
@@ -17,61 +20,119 @@ source "$HERE/scripts/freerdp-common.sh"   # info/warn/die
 # ----------------------------------------------------------------- python
 
 ensure_python_deps() {
-    # Prefer distribution packages for pip and PyQt6. The PyQt6 wheel on PyPI
-    # is a large compiled download, and the packaged build integrates better
-    # with the system Qt theme.
-    local missing=()
-    python3 -m pip --version >/dev/null 2>&1 || missing+=(pip)
-    python3 -c "import PyQt6.QtWidgets" >/dev/null 2>&1 || missing+=(pyqt6)
+    # PyQt6 from the distribution, not PyPI: the wheel is a large compiled
+    # download, the packaged build follows the system Qt theme, and crucially
+    # it moves to each new Python along with the OS. pip is not needed.
+    python3 -c "import PyQt6.QtWidgets" >/dev/null 2>&1 && return 0
 
-    [[ ${#missing[@]} -eq 0 ]] && return 0
-
-    info "Installing Python prerequisites: ${missing[*]}"
-    local pkgs=()
+    info "Installing PyQt6"
     if command -v dnf >/dev/null; then
-        [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python3-pip)
-        [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python3-pyqt6)
-        sudo dnf install -y "${pkgs[@]}"
+        sudo dnf install -y python3-pyqt6
     elif command -v apt-get >/dev/null; then
-        [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python3-pip)
-        [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python3-pyqt6)
-        sudo apt-get update && sudo apt-get install -y "${pkgs[@]}"
+        sudo apt-get update && sudo apt-get install -y python3-pyqt6
     elif command -v pacman >/dev/null; then
-        [[ " ${missing[*]} " == *" pip "*   ]] && pkgs+=(python-pip)
-        [[ " ${missing[*]} " == *" pyqt6 "* ]] && pkgs+=(python-pyqt6)
-        sudo pacman -S --needed --noconfirm "${pkgs[@]}"
+        sudo pacman -S --needed --noconfirm python-pyqt6
     else
-        die "Install python3-pip and python3-pyqt6 with your package manager, then re-run."
+        die "Install PyQt6 for python3 with your package manager, then re-run."
     fi
-
-    python3 -m pip --version >/dev/null 2>&1 || die "pip is still unavailable after installation."
+    python3 -c "import PyQt6.QtWidgets" >/dev/null 2>&1 \
+        || die "PyQt6 is still not importable after installation."
 }
 
-pip_install() {
-    # mktemp rather than a fixed /tmp/entrardp-pip.log: a predictable name in a
-    # shared directory is one another user can pre-create as a symlink, and on
-    # a multi-user machine the fixed path also collides between users.
-    local log rc=0
-    log="$(mktemp -t entrardp-pip.XXXXXX)"
+APP_DIR="$HOME/.local/share/entrardp/app"
+LAUNCHER="$HOME/.local/bin/entrardp"
 
-    # Many distributions mark the system Python as externally managed (PEP 668),
-    # which blocks pip even for --user installs. Retry with the override, which
-    # only ever touches ~/.local, never system packages.
-    if python3 -m pip install --user --upgrade "$HERE" 2>"$log"; then
-        rm -f "$log"
-        return 0
-    fi
-    grep -q "externally-managed-environment" "$log" || rc=1
-    # Removed before either branch below, because die exits and would leak it.
-    [[ $rc -eq 0 ]] || cat "$log" >&2
-    rm -f "$log"
+# Copy the package into a private directory and start it through a launcher
+# that sets PYTHONPATH, instead of `pip install --user`.
+#
+# pip --user installs into ~/.local/lib/python3.N/site-packages, which only
+# python3.N searches. An OS upgrade that moves to Python 3.N+1 makes the app
+# vanish while its launcher stays behind and fails with "No module named
+# entrardp" — exactly what Fedora 44 to 45 (3.14 to 3.15) did. The app is
+# pure Python, so a plain directory works with whichever python3 is current.
+install_app() {
+    rm -rf "$APP_DIR/entrardp"
+    mkdir -p "$APP_DIR"
+    cp -r "$HERE/src/entrardp" "$APP_DIR/"
+    find "$APP_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
 
-    [[ $rc -eq 0 ]] || die "Installation failed. See the output above."
-    warn "System Python is externally managed; installing into ~/.local anyway."
-    python3 -m pip install --user --upgrade --break-system-packages "$HERE"
+    mkdir -p "$(dirname "$LAUNCHER")"
+    cat > "$LAUNCHER" <<'LAUNCH'
+#!/bin/sh
+# Generated by Entra RDP's install.sh. Runs the app with whichever python3 is
+# current, so moving to a newer Python does not strand it.
+PYTHONPATH="$HOME/.local/share/entrardp/app${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m entrardp "$@"
+LAUNCH
+    chmod 755 "$LAUNCHER"
+}
+
+# Remove what earlier versions of this script installed with pip, for every
+# Python they may have used. Left alone, a copy under the current Python's
+# site-packages would shadow nothing (PYTHONPATH wins) but would linger
+# forever, and `pip uninstall` from a newer Python cannot see older ones.
+# Only this project's own package directories are touched.
+remove_pip_install() {
+    local site removed=0
+    for site in "$HOME"/.local/lib/python3.*/site-packages; do
+        [[ -d "$site/entrardp" ]] || continue
+        rm -rf "$site/entrardp" "$site"/entrardp-*.dist-info
+        removed=1
+    done
+    [[ $removed -eq 0 ]] || info "Removed the previous pip-based installation"
 }
 
 # ---------------------------------------------------------------- freerdp
+
+# Report every installed FreeRDP client and whether it can sign in, using the
+# app's own probe so this and the GUI never disagree. Succeeds if any can.
+existing_freerdp_signs_in() {
+    PYTHONPATH="$HERE/src" python3 -m entrardp.freerdp
+}
+
+# Install or update the distribution's FreeRDP. Only called when nothing
+# installed can sign in, so a working setup never triggers a sudo prompt.
+# Updating matters as much as installing: Fedora 44 shipped 3.24, which has
+# no sign-in helper, and later updated to 3.32. Package names differ: Debian
+# and Ubuntu split the clients, Fedora and Arch ship them together. Only dnf
+# has been exercised. Failure is not fatal; the caller probes again and
+# builds if still needed.
+install_distro_freerdp() {
+    if command -v dnf >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        if rpm -q freerdp >/dev/null 2>&1; then
+            sudo dnf upgrade -y freerdp || warn "Could not update freerdp"
+        else
+            sudo dnf install -y freerdp || warn "Could not install freerdp"
+        fi
+    elif command -v apt-get >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        if ! { sudo apt-get update && sudo apt-get install -y freerdp3-sdl freerdp3-x11; }; then
+            warn "Could not install freerdp3-sdl and freerdp3-x11"
+        fi
+    elif command -v pacman >/dev/null; then
+        info "Installing or updating the distribution's FreeRDP"
+        sudo pacman -S --needed --noconfirm freerdp || warn "Could not install freerdp"
+    fi
+    return 0
+}
+
+# Fedora 43 and 44 received the browser sign-in helper as an update
+# (rhbz#2520877), which spends time in updates-testing before reaching
+# stable. Taking just freerdp from there beats compiling one: it is still
+# Fedora's package, and the next regular update replaces it. Only when the
+# repository exists, so this does nothing outside Fedora.
+try_fedora_testing_freerdp() {
+    command -v dnf >/dev/null || return 1
+    rpm -q freerdp >/dev/null 2>&1 || return 1
+    dnf repolist --all 2>/dev/null | grep -q '^updates-testing ' || return 1
+    info "Trying freerdp from Fedora's updates-testing repository"
+    sudo dnf upgrade -y --enablerepo=updates-testing freerdp \
+        || { warn "Could not update freerdp from updates-testing"; return 1; }
+    info "Checking installed FreeRDP clients again"
+    existing_freerdp_signs_in
+}
 
 build_freerdp() {
     if [[ "${SKIP_FREERDP:-0}" == "1" ]]; then
@@ -79,40 +140,51 @@ build_freerdp() {
         return 0
     fi
 
-    if command -v rpmbuild >/dev/null && command -v dnf >/dev/null; then
-        # Preferred route. Builds through FreeRDP's own packaging, so the
-        # BuildRequires list comes from upstream rather than being maintained
-        # here, and the result is a package dnf can track and remove.
-        info "Building a webview-enabled FreeRDP package"
-        "$HERE/scripts/build-freerdp-rpm.sh"
-        return 0
+    if [[ "${FORCE_FREERDP_BUILD:-0}" != "1" ]]; then
+        info "Checking installed FreeRDP clients"
+        if ! existing_freerdp_signs_in; then
+            install_distro_freerdp
+            info "Checking installed FreeRDP clients again"
+        fi
+        if existing_freerdp_signs_in || try_fedora_testing_freerdp; then
+            info "An installed FreeRDP can sign in to Entra; not compiling."
+            info "Set FORCE_FREERDP_BUILD=1 to build one anyway, for example to get"
+            info "the embedded sign-in window instead of the default browser."
+            return 0
+        fi
+        info "None can sign in without copy and paste; building one."
     fi
 
     if [[ -x "$HERE/scripts/build-freerdp.sh" ]]; then
-        # Fallback for non-RPM systems. The dependency lists in that script are
-        # maintained here and have only been exercised on Fedora, so expect to
-        # install a package or two by hand; its preflight check names them.
-        warn "No RPM tooling found; falling back to the source build."
-        warn "Its dependency lists are untested outside Fedora. Preflight will"
-        warn "report anything missing before the compile starts."
+        # The dependency lists in that script are maintained here and have
+        # only been exercised on Fedora, so elsewhere expect to install a
+        # package or two by hand; its preflight check names them.
+        if ! command -v dnf >/dev/null; then
+            warn "The source build's dependency lists are untested outside"
+            warn "Fedora. Preflight will report anything missing before the"
+            warn "compile starts."
+        fi
+        info "Building FreeRDP with the sign-in helpers"
         "$HERE/scripts/build-freerdp.sh"
         return 0
     fi
 
     warn "No FreeRDP build script available for this system."
-    warn "Install or build a FreeRDP client with WITH_WEBVIEW=ON and select it"
-    warn "in the application. Check an existing install with:"
-    warn "    sdl-freerdp /buildconfig | tr ' ' '\\n' | grep -i WITH_WEBVIEW"
+    warn "Install a FreeRDP 3.32+ client built with an AAD sign-in helper and"
+    warn "select it in the application. Check an existing install with:"
+    warn "    PYTHONPATH=$HERE/src python3 -m entrardp.freerdp <path-to-binary>"
     info "Continuing with the GUI installation."
 }
 
 # ------------------------------------------------------------------- main
 
-build_freerdp
+# Python first: it is quick, and the FreeRDP check needs python3 anyway.
 ensure_python_deps
+build_freerdp
 
 info "Installing the application"
-pip_install
+remove_pip_install
+install_app
 
 info "Registering desktop entry and icon"
 install -Dm644 "$HERE/data/io.github.themew2.EntraRDP.desktop" \
@@ -212,10 +284,8 @@ rm -f "$HICOLOR/icon-theme.cache"
 gtk-update-icon-cache -f -t "$HICOLOR" 2>/dev/null || true
 kbuildsycoca6 --noincremental 2>/dev/null || kbuildsycoca5 --noincremental 2>/dev/null || true
 
-if [[ ! -x "$HOME/.local/bin/entrardp" ]]; then
-    warn "Expected launcher at ~/.local/bin/entrardp was not created."
-    warn "Run it with: python3 -m entrardp"
-fi
+PYTHONPATH="$APP_DIR" python3 -c "import entrardp" \
+    || die "The installed application does not import. See the output above."
 
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;

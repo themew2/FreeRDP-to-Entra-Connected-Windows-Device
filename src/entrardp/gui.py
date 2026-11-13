@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,19 +23,27 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QStyle,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from .config import APP_NAME, MUTUALLY_EXCLUSIVE, TOGGLES, ProfileStore, clean_value
 from .freerdp import (
+    HELPER_LABELS,
+    Capability,
     Connection,
-    Webview,
-    detect_webview,
+    SignIn,
+    detect_signin,
     find_binary,
+    find_x11_client,
     is_usable,
     resolves,
 )
+
+# Profile value for leaving the helper choice to FreeRDP's autodetection.
+AUTO_HELPER = "auto"
 
 STATUS_COLORS = {
     "ok": "color: #27ae60;",
@@ -66,26 +75,26 @@ class DnsProbe(QRunnable):
         self.signals.finished.emit(self.host, ok)
 
 
-class WebviewProbeSignals(QObject):
-    # Webview is an Enum, so the payload is typed as a plain object.
+class CapabilityProbeSignals(QObject):
+    # Capability is a dataclass, so the payload is typed as a plain object.
     finished = pyqtSignal(str, object)
 
 
-class WebviewProbe(QRunnable):
-    """Inspect one binary's build flags off the UI thread.
+class CapabilityProbe(QRunnable):
+    """Inspect one binary's sign-in support off the UI thread.
 
-    detect_webview shells out to /buildconfig, ldd and nm. `nm` over a FreeRDP
-    binary is slow enough to stall the interface visibly, and this used to run
-    inline on every keystroke in the binary field.
+    detect_signin shells out to ldd and /buildconfig. Either can take long
+    enough to stall the interface visibly, and probing used to run inline on
+    every keystroke in the binary field.
     """
 
     def __init__(self, path: str):
         super().__init__()
         self.path = path
-        self.signals = WebviewProbeSignals()
+        self.signals = CapabilityProbeSignals()
 
     def run(self):
-        self.signals.finished.emit(self.path, detect_webview(self.path))
+        self.signals.finished.emit(self.path, detect_signin(self.path))
 
 
 class BinarySearchSignals(QObject):
@@ -95,7 +104,7 @@ class BinarySearchSignals(QObject):
 class BinarySearch(QRunnable):
     """Locate a FreeRDP binary off the UI thread.
 
-    find_binary calls detect_webview once per candidate, so it carries the
+    find_binary calls detect_signin once per candidate, so it carries the
     cost described above several times over — far too slow to run while the
     window is being constructed.
     """
@@ -117,8 +126,18 @@ class MainWindow(QWidget):
         self.toggle_widgets: dict[str, QCheckBox] = {}
         self._pool = QThreadPool()
         self._dns_ok: dict[str, bool] = {}
-        self._webview: dict[str, Webview] = {}
+        self._caps: dict[str, Capability] = {}
+        # The helper a loaded profile asked for. Kept separately from the
+        # combo box because the box is only populated once the binary has
+        # been probed, which happens after the profile is applied.
+        self._wanted_helper = AUTO_HELPER
+        # The latest request for a background binary search: whether one is
+        # running, the status note to show, and the field value it may
+        # overwrite. Kept on the window rather than captured per search, so a
+        # request made while a search is already running is not lost.
         self._search_pending = False
+        self._search_note = ""
+        self._search_replace = ""
         # Wait for a pause in typing before probing, so an intermediate value
         # like "m" on the way to "my-host" never triggers a lookup.
         self._dns_timer = QTimer(self)
@@ -129,7 +148,7 @@ class MainWindow(QWidget):
         self._bin_timer = QTimer(self)
         self._bin_timer.setSingleShot(True)
         self._bin_timer.setInterval(400)
-        self._bin_timer.timeout.connect(self._start_webview_probe)
+        self._bin_timer.timeout.connect(self._start_cap_probe)
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self._drain)
@@ -166,6 +185,15 @@ class MainWindow(QWidget):
         prof_row.addWidget(del_btn)
         root.addLayout(prof_row)
 
+        # Everyday fields on the first tab; the rest is set once and left.
+        tabs = QTabWidget()
+        self.tabs = tabs
+        root.addWidget(tabs, 1)
+        conn_page = self._tab(tabs, "Connection")
+        settings_page = self._tab(tabs, "Settings")
+        advanced_page = self._tab(tabs, "Advanced")
+        self._advanced_index = tabs.count() - 1
+
         conn = QGroupBox("Connection")
         form = QFormLayout(conn)
         self.host_in = QLineEdit()
@@ -196,7 +224,7 @@ class MainWindow(QWidget):
         form.addRow("AVD workspace:", ws_row)
         form.addRow("User name:", self.user_in)
         form.addRow("Tenant ID:", self.tenant_in)
-        root.addWidget(conn)
+        conn_page.addWidget(conn)
 
         binbox = QGroupBox("FreeRDP binary")
         binlayout = QVBoxLayout(binbox)
@@ -209,13 +237,27 @@ class MainWindow(QWidget):
         bin_row.addWidget(self.bin_in, 1)
         bin_row.addWidget(browse_btn)
         binlayout.addLayout(bin_row)
-        self.webview_label = QLabel()
-        self.webview_label.setWordWrap(True)
-        binlayout.addWidget(self.webview_label)
-        root.addWidget(binbox)
+        self.signin_label = QLabel()
+        self.signin_label.setWordWrap(True)
+        binlayout.addWidget(self.signin_label)
+        helper_row = QHBoxLayout()
+        self.helper_box = QComboBox()
+        self.helper_box.setToolTip(
+            "Which sign-in helper FreeRDP starts (/azure:auth-helper).\n"
+            "Automatic uses FreeRDP's own order: default browser first.\n"
+            "Only helpers installed with the selected binary are listed."
+        )
+        self.helper_box.activated.connect(self._on_helper_chosen)
+        helper_row.addWidget(QLabel("Sign-in method:"))
+        helper_row.addWidget(self.helper_box, 1)
+        binlayout.addLayout(helper_row)
+        self._fill_helpers(None)
+        advanced_page.addWidget(binbox)
 
         opts = QGroupBox("Session options")
-        cols = QHBoxLayout(opts)
+        optlayout = QVBoxLayout(opts)
+        cols = QHBoxLayout()
+        optlayout.addLayout(cols)
         left, right = QVBoxLayout(), QVBoxLayout()
         half = (len(TOGGLES) + 1) // 2
         for i, (key, label, flag, default, tip) in enumerate(TOGGLES):
@@ -229,7 +271,11 @@ class MainWindow(QWidget):
         right.addStretch()
         cols.addLayout(left)
         cols.addLayout(right)
-        root.addWidget(opts)
+        self.floatbar_cb = QCheckBox("On-screen toolbar in fullscreen (minimize, close)")
+        self.floatbar_cb.stateChanged.connect(self._refresh)
+        optlayout.addWidget(self.floatbar_cb)
+        self._update_floatbar(None)
+        settings_page.addWidget(opts)
 
         res = QGroupBox("Manual resolution")
         res.setCheckable(True)
@@ -252,7 +298,7 @@ class MainWindow(QWidget):
         res_row.addWidget(QLabel("Height:"))
         res_row.addWidget(self.height_in)
         res_row.addStretch()
-        root.addWidget(res)
+        settings_page.addWidget(res)
 
         envbox = QGroupBox("Environment")
         envlayout = QVBoxLayout(envbox)
@@ -260,7 +306,8 @@ class MainWindow(QWidget):
         self.force_x11.setChecked(True)
         self.force_x11.setToolTip(
             "Runs the client under XWayland.\n"
-            "The Entra webview popup does not map reliably on native Wayland."
+            "An embedded sign-in window does not map reliably on native Wayland.\n"
+            "Not needed when signing in through the default browser."
         )
         self.force_x11.stateChanged.connect(self._refresh)
         self.no_compositing = QCheckBox(
@@ -288,7 +335,7 @@ class MainWindow(QWidget):
         envlayout.addWidget(self.no_compositing)
         envlayout.addWidget(QLabel("Custom variables, one KEY=VALUE per line:"))
         envlayout.addWidget(self.env_in)
-        root.addWidget(envbox)
+        advanced_page.addWidget(envbox)
 
         extra_row = QHBoxLayout()
         self.extra_in = QLineEdit()
@@ -296,13 +343,16 @@ class MainWindow(QWidget):
         self.extra_in.textChanged.connect(self._refresh)
         extra_row.addWidget(QLabel("Extra flags:"))
         extra_row.addWidget(self.extra_in, 1)
-        root.addLayout(extra_row)
+        advanced_page.addLayout(extra_row)
 
-        root.addWidget(QLabel("Command preview:"))
+        advanced_page.addWidget(QLabel("Command preview:"))
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMaximumHeight(130)
-        root.addWidget(self.preview)
+        advanced_page.addWidget(self.preview)
+
+        for page in (conn_page, settings_page, advanced_page):
+            page.addStretch()
 
         self.warn_label = QLabel()
         self.warn_label.setWordWrap(True)
@@ -320,6 +370,12 @@ class MainWindow(QWidget):
         act.addWidget(self.connect_btn)
         root.addLayout(act)
 
+    @staticmethod
+    def _tab(tabs: QTabWidget, title: str) -> QVBoxLayout:
+        page = QWidget()
+        tabs.addTab(page, title)
+        return QVBoxLayout(page)
+
     # ------------------------------------------------------------- state
     def _connection(self) -> Connection:
         return Connection(
@@ -336,7 +392,65 @@ class MainWindow(QWidget):
             extra_env=self.env_in.toPlainText(),
             extra=self.extra_in.text(),
             workspace_file=self.workspace_in.text(),
+            auth_helper=self._helper_path(),
+            floatbar=self.floatbar_cb.isChecked() and self.floatbar_cb.isEnabled(),
         )
+
+    def _update_floatbar(self, path: str | None):
+        """Offer the toolbar only when an X11 client sits beside the binary.
+
+        Only a stat or two, so it stays on the UI thread. The tick is kept
+        while disabled, so a profile's preference survives browsing to a
+        binary without one and back.
+        """
+        x11 = find_x11_client(path) if path else None
+        self.floatbar_cb.setEnabled(bool(x11))
+        if x11:
+            self.floatbar_cb.setToolTip(
+                f"Runs {x11} instead, with /floatbar.\n"
+                "Same FreeRDP build and sign-in; FreeRDP's SDL client has no toolbar.\n"
+                "The bar starts visible, slides away, and returns when the mouse\n"
+                "reaches the top edge. Fullscreen toggle: Ctrl+Alt+Enter."
+            )
+        else:
+            self.floatbar_cb.setToolTip(
+                "Needs FreeRDP's X11 client (xfreerdp) installed beside the\n"
+                "selected binary. FreeRDP's SDL client has no on-screen toolbar."
+            )
+
+    def _current_cap(self) -> Capability | None:
+        return self._caps.get(clean_value(self.bin_in.text()))
+
+    def _helper_path(self) -> str:
+        """The chosen helper's path, or empty for FreeRDP's autodetection."""
+        name = self.helper_box.currentData()
+        cap = self._current_cap()
+        if not name or name == AUTO_HELPER or not cap:
+            return ""
+        return cap.helpers.get(name, "")
+
+    def _fill_helpers(self, cap: Capability | None):
+        """List the helpers the current binary actually has.
+
+        Restores the profile's choice when this binary offers it. When it
+        does not, the box shows Automatic but _wanted_helper is left alone,
+        so switching back to a binary that has it restores it.
+        """
+        helpers = cap.helpers if cap else {}
+        self.helper_box.blockSignals(True)
+        self.helper_box.clear()
+        self.helper_box.addItem("Automatic", AUTO_HELPER)
+        for name in helpers:
+            self.helper_box.addItem(HELPER_LABELS[name], name)
+        index = self.helper_box.findData(self._wanted_helper)
+        self.helper_box.setCurrentIndex(max(index, 0))
+        self.helper_box.blockSignals(False)
+        # A single helper is what Automatic picks anyway; nothing to choose.
+        self.helper_box.setEnabled(len(helpers) > 1)
+
+    def _on_helper_chosen(self, _index: int):
+        self._wanted_helper = self.helper_box.currentData() or AUTO_HELPER
+        self._refresh()
 
     def _drain(self):
         """Stop scheduling probes and let any in flight finish.
@@ -408,9 +522,12 @@ class MainWindow(QWidget):
         workspace = clean_value(self.workspace_in.text())
         # Either a host or a workspace file identifies the target; one is
         # enough to launch.
+        cap = self._current_cap()
         blocking = (
             not is_usable(clean_value(self.bin_in.text()))
             or not (host or workspace)
+            # It would only exit at once with a loader error.
+            or (cap is not None and cap.sign_in is SignIn.BROKEN)
         )
         self.connect_btn.setEnabled(not blocking)
 
@@ -487,74 +604,131 @@ class MainWindow(QWidget):
 
     def _on_binary_changed(self):
         path = clean_value(self.bin_in.text())
+        self._update_floatbar(path)
         if not path:
             self._set_label("No binary selected. Run the installer, or browse to one.", "error")
+            self._fill_helpers(None)
         elif not is_usable(path):
             # Only a stat, so this stays on the UI thread.
             self._set_label("Not found, or not executable.", "error")
-        elif path in self._webview:
-            self._show_webview(self._webview[path])
+            self._fill_helpers(None)
+        elif path in self._caps:
+            self._show_cap(path, self._caps[path])
         else:
-            self._set_label("Checking build flags...", "muted")
+            self._set_label("Checking sign-in support...", "muted")
+            self._fill_helpers(None)
             self._bin_timer.start()
         self._refresh()
 
-    def _start_webview_probe(self):
+    def _start_cap_probe(self):
         path = clean_value(self.bin_in.text())
-        if not path or not is_usable(path) or path in self._webview:
+        if not path or not is_usable(path) or path in self._caps:
             return
-        probe = WebviewProbe(path)
-        probe.signals.finished.connect(self._webview_result)
+        probe = CapabilityProbe(path)
+        probe.signals.finished.connect(self._cap_result)
         self._pool.start(probe)
 
-    def _webview_result(self, path: str, state: Webview):
-        self._webview[path] = state
+    def _cap_result(self, path: str, cap: Capability):
+        self._caps[path] = cap
         # Only report if the field still holds the path that was probed.
         if clean_value(self.bin_in.text()) == path:
-            self._show_webview(state)
+            self._show_cap(path, cap)
+            self._refresh()
 
-    def _show_webview(self, state: Webview):
-        if state is Webview.YES:
-            self._set_label("WebView support detected — sign-in opens an embedded browser.", "ok")
-        elif state is Webview.NO:
+    def _show_cap(self, path: str, cap: Capability):
+        # Each message stays short enough for one or two lines, with detail in
+        # the tooltip. A word-wrapped label does not reliably grow the window
+        # in this layout, so longer text was clipped mid-sentence.
+        self._fill_helpers(cap)
+        if cap.sign_in is SignIn.HELPER:
+            names = ", ".join(HELPER_LABELS[n].lower() for n in cap.helpers)
             self._set_label(
-                "WITH_WEBVIEW=OFF in this build. Sign-in will fall back to printing a "
-                "URL for manual copy/paste. Distribution packages commonly ship this "
-                "way; run scripts/build-freerdp.sh, or select a build made with "
-                "WITH_WEBVIEW=ON (FreeRDP 3.16.0 or newer).",
-                "warn",
+                f"Sign-in helper available: {names}.", "ok",
+                "Sign-in opens outside the client. No copy and paste.",
+            )
+        elif cap.sign_in is SignIn.EMBEDDED:
+            self._set_label(
+                "Embedded sign-in window (WITH_WEBVIEW).", "ok",
+                "The FreeRDP 3.16–3.31 mechanism. Newer releases replace it\n"
+                "with separate sign-in helpers.",
+            )
+        elif cap.sign_in is SignIn.MANUAL:
+            tip = (
+                "Sign-in will print a URL to open in a browser and paste back.\n"
+                "FreeRDP 3.32 or newer built with a sign-in helper avoids that;\n"
+                "Fedora 45's own package has one. scripts/install.sh builds one\n"
+                "only if nothing installed qualifies."
+            )
+            if cap.missing_helpers:
+                tip += (
+                    "\n\nBuilt with the " + ", ".join(cap.missing_helpers)
+                    + " helper, but that program is not installed beside it."
+                )
+            self._set_label("No sign-in window: copy-and-paste sign-in. Run scripts/install.sh.",
+                            "warn", tip)
+        elif cap.sign_in is SignIn.BROKEN:
+            self._set_label(
+                f"Cannot start: {len(cap.missing_libs)} libraries missing, usually after "
+                "an OS upgrade. Rebuild with scripts/install.sh.",
+                "error",
+                "Missing:\n  " + "\n  ".join(cap.missing_libs)
+                + "\n\nThe libraries this build was compiled against have been\n"
+                "replaced. Choose another binary, or rebuild.",
+            )
+            # Step aside to a working build whenever one is shown, including
+            # when a profile puts it back. _detected_binary never switches to
+            # a broken build, so this cannot bounce between two of them.
+            self._autodetect_binary(
+                f"{path} cannot start after a library change; using {{path}}",
+                replace=path,
             )
         else:
-            self._set_label("Could not determine WebView support.", "muted")
+            self._set_label("Could not determine sign-in support.", "muted")
 
-    def _autodetect_binary(self, note: str = ""):
+    def _autodetect_binary(self, note: str = "", replace: str = ""):
         """Fill the binary field from a background search.
 
         `note`, if given, is shown when the search succeeds and may contain a
-        {path} placeholder.
+        {path} placeholder. `replace` names a value the field may hold and
+        still be overwritten; otherwise only an empty field is filled.
         """
+        self._search_note, self._search_replace = note, replace
         if self._search_pending:
+            # The running search reads the request above when it finishes.
             return
         self._search_pending = True
         search = BinarySearch()
-        search.signals.finished.connect(
-            lambda path: self._detected_binary(path, note)
-        )
+        search.signals.finished.connect(self._detected_binary)
         self._pool.start(search)
 
-    def _detected_binary(self, path: str, note: str):
+    def _detected_binary(self, path: str):
         self._search_pending = False
+        note, replace = self._search_note, self._search_replace
+        self._search_note = self._search_replace = ""
+        current = clean_value(self.bin_in.text())
         # The search takes seconds, in which the user may have browsed to a
         # binary or loaded another profile. Never overwrite that.
-        if not path or clean_value(self.bin_in.text()):
+        if not path or path == current or (current and current != replace):
+            return
+        # Never trade one build that cannot start for another. find_binary
+        # only returns one when nothing else exists; the cache makes this a
+        # stat, since the search just probed it.
+        if detect_signin(path).sign_in is SignIn.BROKEN:
             return
         self.bin_in.setText(path)
         if note:
             self._set_status(note.format(path=path), "warn")
 
-    def _set_label(self, text: str, kind: str):
-        self.webview_label.setText(text)
-        self.webview_label.setStyleSheet(STATUS_COLORS.get(kind, ""))
+    def _set_label(self, text: str, kind: str, tip: str = ""):
+        self.signin_label.setText(text)
+        self.signin_label.setToolTip(tip)
+        self.signin_label.setStyleSheet(STATUS_COLORS.get(kind, ""))
+        # The binary lives on the Advanced tab; flag trouble from any tab.
+        icon = QIcon()
+        if kind in ("warn", "error"):
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+        self.tabs.setTabIcon(self._advanced_index, icon)
+        self.tabs.setTabToolTip(self._advanced_index, text if kind in ("warn", "error") else "")
 
     # ------------------------------------------------------------ actions
     def _copy(self):
@@ -667,7 +841,10 @@ class MainWindow(QWidget):
         # support existed. Their defaults are the previous behaviour.
         self.workspace_in.setText(data.get("workspace_file", ""))
         self.no_compositing.setChecked(data.get("disable_compositing", False))
+        self.floatbar_cb.setChecked(data.get("floatbar", False))
         self.env_in.setPlainText(data.get("extra_env", ""))
+        self._wanted_helper = data.get("auth_helper", AUTO_HELPER)
+        self._fill_helpers(self._current_cap())
         self.store.last_used = name
         self._refresh()
         self._set_status(f"Loaded '{name}'", "muted")
@@ -700,6 +877,11 @@ class MainWindow(QWidget):
             "extra_env": conn.extra_env.strip(),
             "extra": clean_value(conn.extra),
             "workspace_file": clean_value(conn.workspace_file),
+            # The short name, not the path: the same helper lives at a
+            # different path in each FreeRDP install, and the binary itself
+            # can change between machines or rebuilds.
+            "auth_helper": self._wanted_helper,
+            "floatbar": self.floatbar_cb.isChecked(),
         })
         self.store.last_used = name
         self._reload_profiles()
