@@ -5,8 +5,8 @@
 #
 # FreeRDP is only compiled when nothing installed can sign in already, and
 # the distribution's own package is tried first: Fedora 45's can, through
-# upstream's browser sign-in helper. When a build is needed it goes through upstream's RPM packaging on dnf systems and
-# from source otherwise. SKIP_FREERDP=1 never builds; FORCE_FREERDP_BUILD=1
+# upstream's browser sign-in helper. When a build is needed it is compiled
+# from source into a private prefix. SKIP_FREERDP=1 never builds; FORCE_FREERDP_BUILD=1
 # always does, which is how to get the embedded sign-in window on a system
 # whose package only offers the browser.
 
@@ -155,25 +155,16 @@ build_freerdp() {
         info "None can sign in without copy and paste; building one."
     fi
 
-    # dnf, not rpmbuild: rpm-build is not installed by default, and the RPM
-    # script installs it itself. Requiring it here sent a fresh Fedora
-    # install down the source route instead.
-    if command -v dnf >/dev/null; then
-        # Preferred route. Builds through FreeRDP's own packaging, so the
-        # BuildRequires list comes from upstream rather than being maintained
-        # here, and the result is a package dnf can track and remove.
-        info "Building a webview-enabled FreeRDP package"
-        "$HERE/scripts/build-freerdp-rpm.sh"
-        return 0
-    fi
-
     if [[ -x "$HERE/scripts/build-freerdp.sh" ]]; then
-        # Fallback for non-RPM systems. The dependency lists in that script are
-        # maintained here and have only been exercised on Fedora, so expect to
-        # install a package or two by hand; its preflight check names them.
-        warn "No dnf found; using the source build."
-        warn "Its dependency lists are untested outside Fedora. Preflight will"
-        warn "report anything missing before the compile starts."
+        # The dependency lists in that script are maintained here and have
+        # only been exercised on Fedora, so elsewhere expect to install a
+        # package or two by hand; its preflight check names them.
+        if ! command -v dnf >/dev/null; then
+            warn "The source build's dependency lists are untested outside"
+            warn "Fedora. Preflight will report anything missing before the"
+            warn "compile starts."
+        fi
+        info "Building FreeRDP with the sign-in helpers"
         "$HERE/scripts/build-freerdp.sh"
         return 0
     fi

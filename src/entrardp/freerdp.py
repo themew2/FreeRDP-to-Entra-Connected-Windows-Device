@@ -32,9 +32,9 @@ from pathlib import Path
 
 from .config import TOGGLES, clean_value, expand_flag, parse_env
 
-# Naming varies with WITH_CLIENT_SDL_VERSIONED: distribution packages commonly
-# build it OFF (sdl-freerdp), while FreeRDP's own nightly spec sets it ON
-# (sdl-freerdp3). Both are the same client.
+# Naming varies with WITH_CLIENT_SDL_VERSIONED: Fedora and Arch build it OFF
+# (sdl-freerdp), while Debian and Ubuntu set it ON (sdl-freerdp3). Both are
+# the same client.
 BIN_NAMES = ["sdl-freerdp3", "sdl-freerdp", "sdl3-freerdp"]
 
 # Searched in order. All are *installed* prefixes.
@@ -50,12 +50,6 @@ PREFERRED_PATHS = [
     Path.home() / ".local/share/entrardp/freerdp/bin/sdl-freerdp",
     Path("/app/bin/sdl-freerdp"),          # sandboxed prefix, if present
     Path("/usr/local/bin/sdl-freerdp"),
-    # The prefix used by scripts/build-freerdp-rpm.sh, from the same release
-    # tag but packaged with upstream's nightly spec. It ranks below the
-    # private prefix because the spec hardcodes version 3.0-0, so rpm cannot
-    # tell one rebuild from another.
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp3"),
-    Path("/opt/freerdp-nightly/bin/sdl-freerdp"),
     # Distribution packages are found through PATH after these.
     #
     # Ranking is only a tie-breaker. find_binary skips any build that cannot
@@ -84,7 +78,7 @@ HELPER_LABELS = {name: label for name, _flag, _file, label in HELPERS}
 # clients come from the same build, and the X11 one obtains Entra tokens
 # through the same sign-in helpers, so switching between them changes the
 # window, not the sign-in. Named xfreerdp3 when built with
-# WITH_BINARY_VERSIONING, as upstream's nightly spec does.
+# WITH_BINARY_VERSIONING, as Debian and Ubuntu do.
 X11_NAMES = ("xfreerdp", "xfreerdp3")
 
 # Shown in fullscreen only, which is when the window offers no controls of its
@@ -262,7 +256,7 @@ def helper_dirs(binary: Path) -> list[Path]:
     Mirrors aad_auth_helper_binary_dirs upstream: the client's own directory
     and ../libexec beside it. The install prefix compiled into the client is
     also searched upstream, but for every layout this app knows about
-    (/usr, /opt/freerdp-nightly, the private prefix) that is the same place.
+    (/usr, the private prefix) that is the same place.
     """
     real = binary.resolve()
     return [real.parent, real.parent.parent / "libexec"]

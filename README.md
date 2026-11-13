@@ -38,7 +38,7 @@ At least one `…_AUTH_HELPER=ON` means it will work. If none is on, sign-in fal
 |---|---|
 | **Fedora 45** | Tested. The distribution's FreeRDP signs in through the default browser. Nothing is compiled |
 | **Fedora 43 / 44** | The browser helper is coming as an update (3.33.1). Until it reaches the stable repositories, the installer takes `freerdp` alone from updates-testing. Fedora 44 was also tested with a FreeRDP built by this project's scripts |
-| Other Fedora / RHEL | Should work. Uses the distribution package if it has a sign-in helper, otherwise builds from upstream's own RPM spec |
+| Other Fedora / RHEL | Should work. Uses the distribution package if it has a sign-in helper, otherwise builds from source |
 | Debian / Ubuntu / Arch | **Untested.** Works if the distribution's FreeRDP is 3.32+ with a helper. Otherwise the source build is used, and its dependency lists have only been tried on Fedora |
 | Anything else | The app runs anywhere PyQt6 does. Supply a FreeRDP yourself and install with `SKIP_FREERDP=1` |
 
@@ -80,8 +80,8 @@ rm -rf ~/.config/entrardp ~/.cache/entrardp
 If this project built a FreeRDP for you, remove that too:
 
 ```bash
-sudo dnf remove freerdp-nightly        # RPM route
-rm -rf ~/.local/share/entrardp         # source route
+rm -rf ~/.local/share/entrardp
+sudo dnf remove freerdp-nightly        # only if an older version built the RPM
 ```
 
 ---
@@ -247,7 +247,7 @@ For the WebKitGTK window, tick *Disable WebKit compositing*. For the Qt WebEngin
 You have an install from an older `install.sh`, which tied the app to one Python version. Fedora 44 → 45 moved from Python 3.14 to 3.15 and left it behind. Run `./scripts/install.sh` again. Current versions don't depend on the Python version, and the installer removes the old copy.
 
 **The app reports "This build cannot start".**
-A FreeRDP you compiled yourself is linked against the libraries that were current when you built it. An upgrade replaces some of them (Fedora 45 moved OpenSSL, FFmpeg and ICU to new versions), and the build no longer starts. The app disables Connect and switches to a working binary if there is one. Run `./scripts/install.sh` again: it uses your distribution's FreeRDP if that can sign in, and rebuilds otherwise. Once you no longer need the old build, remove it with `rm -rf ~/.local/share/entrardp/freerdp` or `sudo dnf remove freerdp-nightly`.
+A FreeRDP you compiled yourself is linked against the libraries that were current when you built it. An upgrade replaces some of them (Fedora 45 moved OpenSSL, FFmpeg and ICU to new versions), and the build no longer starts. The app disables Connect and switches to a working binary if there is one. Run `./scripts/install.sh` again: it uses your distribution's FreeRDP if that can sign in, and rebuilds otherwise. Once you no longer need the old build, remove it with `rm -rf ~/.local/share/entrardp/freerdp`, or `sudo dnf remove freerdp-nightly` if an older version of the installer built it as an RPM. The app no longer looks in `/opt/freerdp-nightly`.
 
 ### The app itself
 
@@ -279,7 +279,7 @@ On Wayland there's no per-window icon. The compositor matches the window to its 
 
 You only need this if your distribution's FreeRDP can't sign in, or if you want the embedded sign-in window and your distribution only ships the browser helper. `install.sh` does it for you automatically in the first case, and with `FORCE_FREERDP_BUILD=1` in the second.
 
-Both build scripts build the newest FreeRDP release with **both** sign-in helpers, default browser and embedded window, so the app can offer either. A build takes 20–40 minutes.
+The build script builds the newest FreeRDP release with **both** sign-in helpers, default browser and embedded window, so the app can offer either. A build takes 20–40 minutes.
 
 ```
 install.sh
@@ -290,8 +290,7 @@ install.sh
   │            yes → done
   │            no  → Fedora: freerdp from updates-testing, then ask again
   │                    yes → done
-  │                    no  → build-freerdp-rpm.sh   with dnf
-  │                          build-freerdp.sh       everywhere else
+  │                    no  → build-freerdp.sh
   ├─ the app, to ~/.local/share/entrardp/app, launcher ~/.local/bin/entrardp
   └─ desktop entry, icons, AppStream metainfo
 ```
@@ -303,30 +302,13 @@ PYTHONPATH=src python3 -m entrardp.freerdp                       # every install
 PYTHONPATH=src python3 -m entrardp.freerdp /path/to/sdl-freerdp  # one binary
 ```
 
-Both build scripts choose the build options from the FreeRDP source itself. A 3.32+ source gets the two sign-in helpers. Older source (3.16–3.31) gets `WITH_WEBVIEW`, the embedded window those versions used. This matters because CMake silently ignores `-DWITH_WEBVIEW=ON` on 3.32+ and builds a client with no sign-in window at all.
+The build script chooses the build options from the FreeRDP source itself. A 3.32+ source gets the two sign-in helpers. Older source (3.16–3.31) gets `WITH_WEBVIEW`, the embedded window those versions used. This matters because CMake silently ignores `-DWITH_WEBVIEW=ON` on 3.32+ and builds a client with no sign-in window at all.
 
-### `scripts/build-freerdp-rpm.sh`: dnf systems
+### `scripts/build-freerdp.sh`
 
-Builds an RPM using FreeRDP's own `packaging/rpm/freerdp-nightly.spec`, changed to enable both sign-in helpers. This is the route the FreeRDP maintainers suggested ([FreeRDP#13237](https://github.com/FreeRDP/FreeRDP/issues/13237)).
+Compiles FreeRDP into `~/.local/share/entrardp/freerdp`, a private location that doesn't clash with your distribution's package.
 
-- `dnf` owns the result, so `dnf remove freerdp-nightly` uninstalls it cleanly
-- build dependencies come from the spec through `dnf builddep`, not from a list maintained here
-- installs to `/opt/freerdp-nightly`, alongside your distribution's FreeRDP
-- the binary is named `sdl-freerdp3`
-
-**The "nightly" name comes from upstream's spec, not from the version built.** The script builds the same tagged release as the source route. Upstream's spec is set up for testing (debug build, AddressSanitizer, extra assertions, experimental video encoding), and the script turns all of that off by default. With those settings on, microphone audio in Teams calls was audibly degraded.
-
-The spec always reports version `3.0-0`, so `dnf install` would treat a rebuild as already installed and leave the old binary in place. The script uses `dnf reinstall` when the package is already installed.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `RELEASE_BUILD=0` | on | Build upstream's test configuration instead. Slower, and known to degrade audio. Only for reporting a bug to FreeRDP |
-| `AUTO_INSTALL=0` | on | Build the RPM but don't install it |
-| `FREERDP_BRANCH` | newest release tag | Branch or tag to build |
-
-### `scripts/build-freerdp.sh`: everywhere else
-
-Compiles FreeRDP into `~/.local/share/entrardp/freerdp`, a private location that doesn't clash with your distribution's package. Used on systems without `dnf`, and usable anywhere if you'd rather not involve the package manager.
+Earlier versions built an RPM from upstream's `freerdp-nightly.spec` on dnf systems. That route has been removed. If you still have it, `sudo dnf remove freerdp-nightly` takes it away.
 
 | Step | What happens |
 |---|---|
@@ -356,15 +338,14 @@ Your distribution's FreeRDP gets security updates with the rest of the system. *
 FreeRDP releases often, and some releases carry important security fixes. Check what you're running:
 
 ```bash
-/opt/freerdp-nightly/bin/sdl-freerdp3 /version              # RPM route
-~/.local/share/entrardp/freerdp/bin/sdl-freerdp /version    # source route
+~/.local/share/entrardp/freerdp/bin/sdl-freerdp /version
 ```
 
-Compare that against FreeRDP's [releases](https://github.com/FreeRDP/FreeRDP/releases) and [security advisories](https://github.com/FreeRDP/FreeRDP/security/advisories), and rebuild when a security release comes out. Re-running a build script picks up the newest release. To build a specific version, or unreleased changes:
+Compare that against FreeRDP's [releases](https://github.com/FreeRDP/FreeRDP/releases) and [security advisories](https://github.com/FreeRDP/FreeRDP/security/advisories), and rebuild when a security release comes out. Re-running the build script picks up the newest release. To build a specific version, or unreleased changes:
 
 ```bash
-FREERDP_BRANCH=<release-tag> ./scripts/build-freerdp-rpm.sh
-FREERDP_BRANCH=master ./scripts/build-freerdp-rpm.sh
+FREERDP_BRANCH=<release-tag> ./scripts/build-freerdp.sh
+FREERDP_BRANCH=master ./scripts/build-freerdp.sh
 ```
 
 If your distribution's FreeRDP gains a sign-in helper later, switch to it and remove your own build.
@@ -393,7 +374,7 @@ Check whether your build has debug settings turned on:
 <path-to-binary> /buildconfig | tr ' ' '\n' | grep -iE 'VERBOSE_WINPR|VAAPI_H264'
 ```
 
-If `WITH_VERBOSE_WINPR_ASSERT=ON`, rebuild with the current scripts, which turn it off. Older copies of `build-freerdp-rpm.sh` left it on. If the rebuilt RPM doesn't seem to replace the old one, check its build date with `rpm -q --qf '%{BUILDTIME:date}\n' freerdp-nightly`, and force it with `sudo rpm -Uvh --force ~/rpmbuild/RPMS/x86_64/freerdp-nightly-*.rpm`.
+If `WITH_VERBOSE_WINPR_ASSERT=ON`, it's probably the old `freerdp-nightly` RPM, which left it on. Remove it with `sudo dnf remove freerdp-nightly` and use your distribution's FreeRDP or `./scripts/build-freerdp.sh` instead.
 
 ---
 
@@ -409,7 +390,6 @@ src/entrardp/
 scripts/
     install.sh            Entry point: installs FreeRDP if needed, the app,
                           and the menu entry
-    build-freerdp-rpm.sh  Builds an RPM through upstream's own packaging
     build-freerdp.sh      Compiles into a private location
     freerdp-common.sh     Shared by the scripts above
     diagnose-icon.sh      Reports why the application icon may not appear

@@ -14,6 +14,7 @@ A PyQt6 front end for FreeRDP that connects to Microsoft Entra ID joined Windows
 
 - Prefer the distribution's FreeRDP. Compile only when nothing installed can sign in.
 - Builds made by this project enable **both** the XDG and WebKitGTK helpers.
+- **No nightly/RPM build route.** `build-freerdp-rpm.sh` (upstream's `freerdp-nightly.spec`, installed to `/opt/freerdp-nightly`) was removed on 2026-11-12, and the app no longer looks in `/opt/freerdp-nightly`. The only build is `build-freerdp.sh`, into `~/.local/share/entrardp/freerdp`.
 - The license is **the Unlicense** everywhere: `LICENSE`, `pyproject.toml`, the metainfo, and the README.
 - The settings UI uses three tabs: Connection, Settings, Advanced.
 - The README presents the app first. Building FreeRDP is a fallback section, and the old guide is kept as history in `docs/BUILD-GUIDE.md`.
@@ -28,7 +29,7 @@ A PyQt6 front end for FreeRDP that connects to Microsoft Entra ID joined Windows
 
 ## Where work stands (2026-11-12)
 
-Branch `fix/fedora-45`, [PR #5](https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/pull/5), open into `main` with CI passing. It covers:
+[PR #5](https://github.com/themew2/FreeRDP-to-Entra-Connected-Windows-Device/pull/5) (`fix/fedora-45`) is **merged into `main`**. It covers:
 
 - support for 3.32+ sign-in helpers
 - detecting builds that can't start after an OS upgrade, and switching away from them
@@ -36,17 +37,22 @@ Branch `fix/fedora-45`, [PR #5](https://github.com/themew2/FreeRDP-to-Entra-Conn
 - the tabbed settings UI
 - an installer that installs the app independently of the Python version
 - the README rewrite and screenshots
+- removal of the nightly/RPM build route
 - version 0.2.0
 
-**Next: test on Fedora 44.** Nothing has been run on Fedora 44 since these changes. On that machine:
+The previous `main` is archived as tag `v0.1.2` and branch `archive/v0.1` (the `WITH_WEBVIEW` era).
 
-1. `PYTHONPATH=src python3 -m entrardp.freerdp` to see what the installed FreeRDP reports.
-2. `./scripts/install.sh`. Expected flow: the installed FreeRDP can't sign in, so the installer updates `freerdp` from stable, which gives 3.32.2 and still can't sign in. It then updates `freerdp` alone from `updates-testing`, which gives 3.33.1, and stops **without compiling**. If the update has reached stable by then, the first update is enough.
-3. If an older self-built FreeRDP exists (`/opt/freerdp-nightly` or `~/.local/share/entrardp/freerdp`), the app prefers it when it can sign in. Check which binary the *Advanced* tab selects.
+**Testing so far.** On Fedora 44, with old self-built FreeRDPs in `~/.local/share/entrardp/freerdp` and `/opt/freerdp-nightly`, both still signed in (embedded window). `install.sh` correctly skipped FreeRDP and installed the app without sudo. The updates-testing path was **not** exercised. The user is upgrading that machine to Fedora 45 instead.
+
+**Next: test on Fedora 45** after the upgrade:
+
+1. `PYTHONPATH=src python3 -m entrardp.freerdp`. Expect `/usr/bin/sdl-freerdp` (3.33.1) to use the browser helper, and the old private build to report as broken (missing OpenSSL, FFmpeg or ICU).
+2. `./scripts/install.sh` should install no FreeRDP, and the app should still launch after the move to Python 3.15.
+3. In the *Advanced* tab, check that the app skips the broken build and selects `/usr/bin/sdl-freerdp`.
 4. Connect and confirm browser sign-in works. Try the on-screen toolbar too.
 
 **Still open:**
 
+- `install.sh` prints the FreeRDP list twice when an installed build already signs in: `existing_freerdp_signs_in` runs once in the `if !` and again in the `if ... ||` that follows.
 - Update the GitHub repository description, which still describes the old build-focused purpose. Suggested wording: "Desktop app for connecting to Entra ID joined Windows machines and Azure Virtual Desktop from Linux with FreeRDP and web sign-in". This only changes with the user's approval.
-- Merge PR #5 after testing on Fedora 44. The README, screenshots and metainfo image URLs only appear on GitHub once it's merged into `main`.
 - Not started, offered to the user: clearer messages when sign-in fails, and support for extra flags containing spaces. Patches to FreeRDP itself were also offered (the toolbar font, and dialogs covering the browser).

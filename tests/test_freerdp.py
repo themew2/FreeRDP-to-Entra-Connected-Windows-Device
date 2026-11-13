@@ -232,7 +232,7 @@ def test_floatbar_off_keeps_the_sdl_client(tmp_path):
 
 
 def test_versioned_sdl_client_prefers_the_versioned_x11_client(tmp_path):
-    """Upstream's nightly spec installs sdl-freerdp3 and xfreerdp3."""
+    """Debian and Ubuntu install sdl-freerdp3 and xfreerdp3."""
     sdl = executable(tmp_path / "sdl-freerdp3")
     executable(tmp_path / "xfreerdp")
     x11 = executable(tmp_path / "xfreerdp3")

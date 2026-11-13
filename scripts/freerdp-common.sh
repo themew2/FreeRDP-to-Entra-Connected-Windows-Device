@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 #
-# Helpers shared by install.sh, build-freerdp.sh and build-freerdp-rpm.sh.
+# Helpers shared by install.sh and build-freerdp.sh.
 # Sourced, never executed.
 #
 # Source this before the first use of info/warn/die, which in practice means
@@ -25,10 +25,6 @@ die()   { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 # at build time always yields a real release without hardcoding a version that
 # goes stale. Security releases here are frequent and substantial, so trailing
 # the current release by a few versions is a real exposure, not a cosmetic one.
-#
-# Shared rather than duplicated because the two build scripts must agree on
-# what they produce: the README, the RPM script's header, and freerdp.py's
-# path-ranking comments all describe both routes as building the same release.
 #
 # $FREERDP_BRANCH overrides, to pin a version or test unreleased changes.
 resolve_version() {
